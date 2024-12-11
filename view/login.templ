@@ -1,0 +1,91 @@
+
+package view
+
+import "github.com/Artur-Galstyan/workcraft-stronghold/view/layout"
+
+templ Login() {
+	@layout.Base() {
+		<div class="flex items-center justify-center">
+			<div class="card w-96 bg-base-100 shadow-xl">
+				<div class="card-body">
+					<h2 class="card-title text-2xl font-bold text-center mb-6">Workcraft Stronghold</h2>
+					<form id="loginForm" class="space-y-4">
+						<div class="form-control">
+							<label class="label">
+								<span class="label-text">Username</span>
+							</label>
+							<input
+								type="text"
+								id="username"
+								name="username"
+								placeholder="Enter username"
+								class="input input-bordered w-full"
+								required
+							/>
+						</div>
+						<div class="form-control">
+							<label class="label">
+								<span class="label-text">Password</span>
+							</label>
+							<input
+								type="password"
+								id="password"
+								name="password"
+								placeholder="Enter password"
+								class="input input-bordered w-full"
+								required
+							/>
+						</div>
+						<div class="form-control mt-6">
+							<button type="submit" class="btn btn-primary">Login</button>
+						</div>
+						<div id="errorMessage" class="text-error text-center hidden">
+							Invalid credentials
+						</div>
+					</form>
+				</div>
+			</div>
+			<script>
+            // Check authentication status immediately
+            if (window.location.pathname !== '/login' && !localStorage.getItem('token')) {
+                window.location.href = '/login';
+            }
+
+            document.getElementById('loginForm').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const errorMessage = document.getElementById('errorMessage');
+                const submitButton = e.target.querySelector('button[type="submit"]');
+
+                try {
+                    errorMessage.classList.add('hidden');
+                    submitButton.classList.add('loading');
+
+                    const response = await fetch('/login', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            username: document.getElementById('username').value,
+                            password: document.getElementById('password').value,
+                        }),
+                    });
+
+                    if (!response.ok) {
+                        throw new Error('Login failed');
+                    }
+
+                    const data = await response.json();
+                    localStorage.setItem('token', data.token);
+                    window.location.href = '/';
+                } catch (error) {
+                    console.error('Login error:', error);
+                    errorMessage.classList.remove('hidden');
+                } finally {
+                    submitButton.classList.remove('loading');
+                }
+            });
+        </script>
+		</div>
+	}
+}
