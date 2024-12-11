@@ -33,12 +33,14 @@ var (
 )
 
 const (
-	TokenExpiration = time.Hour * 24 // 24 hours
+	TokenExpiration        = time.Hour * 24 // 24 hours
+	HeartbeatClearInterval = time.Second * 30
 )
 
 type ConnectionRegistry struct {
 	connections map[string]*websocket.Conn
 	mu          sync.RWMutex
+	db          *sql.DB
 }
 
 type TaskProcessor struct {
@@ -62,6 +64,10 @@ type Credentials struct {
 type Claims struct {
 	jwt.RegisteredClaims
 	APIKey string `json:"api_key"`
+}
+
+type TaskAcknowledgement struct {
+	PeonID string `json:"peon_id"`
 }
 
 type TaskStatus string
@@ -107,9 +113,9 @@ type Peon struct {
 	Queues        *string `json:"queues"`
 }
 
-func NewConnectionRegistry() *ConnectionRegistry {
+func NewConnectionRegistry(db *sql.DB) *ConnectionRegistry {
 	return &ConnectionRegistry{
-		connections: make(map[string]*websocket.Conn),
+		connections: make(map[string]*websocket.Conn), db: db,
 	}
 }
 
@@ -293,6 +299,7 @@ func (cr *ConnectionRegistry) SendMessage(peonID string, message []byte) error {
 
 	conn, exists := cr.connections[peonID]
 	if !exists {
+		markPeonOffline(db, peonID)
 		return fmt.Errorf("no connection found for peon: %s", peonID)
 	}
 
@@ -312,7 +319,13 @@ func init() {
 	hasher := sha256.New()
 	hasher.Write([]byte(apiKey))
 	hashedApiKey = hex.EncodeToString(hasher.Sum(nil))
+}
 
+func markPeonOffline(db *sql.DB, peonID string) {
+	_, err := db.Exec("UPDATE peon SET status = 'OFFLINE' WHERE id = ?", peonID)
+	if err != nil {
+		slog.Error("Failed to mark peon offline", "err", err)
+	}
 }
 
 func loginHandler(w http.ResponseWriter, r *http.Request) {
@@ -402,10 +415,8 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 func setupCronJobs(db *sql.DB) {
 	c := cron.New()
 
-	// Check for dead peons every minute
-	// Update peons that haven't sent a heartbeat in the last 5 minutes to OFFLINE
 	c.AddFunc("* * * * *", func() {
-		query := `UPDATE peon SET status = 'OFFLINE' WHERE last_heartbeat < datetime('now', '-5 minutes')`
+		query := `UPDATE peon SET status = 'OFFLINE' WHERE last_heartbeat < datetime('now', '-1 minutes')`
 
 		_, err := db.Exec(query)
 		if err != nil {
@@ -414,7 +425,6 @@ func setupCronJobs(db *sql.DB) {
 		}
 	})
 
-	// Start the cron scheduler
 	c.Start()
 }
 
@@ -434,6 +444,99 @@ var upgrader = websocket.Upgrader{
 
 		return true
 	},
+}
+
+func createPostTaskUpdateHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		taskID := r.PathValue("id")
+		if taskID == "" {
+			slog.Error("Task ID is required")
+			http.Error(w, "Task ID is required", http.StatusBadRequest)
+			return
+		}
+		slog.Info("Received update for ", "id", taskID)
+
+		var task Task
+		err := json.NewDecoder(r.Body).Decode(&task)
+		if err != nil {
+			slog.Error("Failed to decode request body", "err", err)
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		_, err = db.Exec("UPDATE bountyboard SET status = ?, peon_id = ?, retry_count = ? WHERE id = ?", task.Status, task.PeonId, task.RetryCount, taskID)
+		if err != nil {
+			slog.Error("Failed to update task status", "err", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func createPostTaskAcknowledgementHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		taskID := r.PathValue("id")
+		if taskID == "" {
+			slog.Error("Task ID is required")
+			http.Error(w, "Task ID is required", http.StatusBadRequest)
+			return
+		}
+		slog.Info("Received acknowledge for ", "id", taskID)
+
+		var t TaskAcknowledgement
+		err := json.NewDecoder(r.Body).Decode(&t)
+		if err != nil {
+			slog.Error("Failed to decode request body", "err", err)
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		_, err = db.Exec("UPDATE bountyboard SET status = 'RUNNING', peon_id = ? WHERE id = ?", t.PeonID, taskID)
+		if err != nil {
+			slog.Error("Failed to update task status", "err", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+
+	}
+}
+
+func createPostStatisticsHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		slog.Info("Received statistics update")
+
+		var stats struct {
+			Type  string      `json:"type"`
+			Value interface{} `json:"value"`
+		}
+
+		err := json.NewDecoder(r.Body).Decode(&stats)
+		if err != nil {
+			slog.Error("Failed to decode request body", "err", err)
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		valueJSON, err := json.Marshal(stats.Value)
+		if err != nil {
+			slog.Error("Failed to serialize value", "err", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		query := `INSERT INTO stats (type, value) VALUES (?, ?)`
+		_, err = db.Exec(query, stats.Type, valueJSON)
+		if err != nil {
+			slog.Error("Failed to insert statistics into database", "err", err)
+		}
+
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte("Statistics added"))
+	}
 }
 
 func createGetAllPeonsHandler(db *sql.DB) http.HandlerFunc {
@@ -466,7 +569,30 @@ func createGetAllPeonsHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-func createCreateTaskHandler(db *sql.DB) http.HandlerFunc {
+func createUpdatePeonHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var peon Peon
+		err := json.NewDecoder(r.Body).Decode(&peon)
+		if err != nil {
+			slog.Error("Failed to decode request body", "err", err)
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		query := `UPDATE peon SET status = ?, last_heartbeat = ?, current_task = ?, queues = ? WHERE id = ?`
+		_, err = db.Exec(query, peon.Status, peon.LastHeartbeat, peon.CurrentTask, peon.Queues, peon.Id)
+		if err != nil {
+			slog.Error("Failed to update peon", "err", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+
+	}
+}
+
+func createPostTaskHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		task := Task{}
 		err := json.NewDecoder(r.Body).Decode(&task)
@@ -570,18 +696,7 @@ func createWsHandler(db *sql.DB) http.HandlerFunc {
 
 			switch wsMsg.Type {
 			case "heartbeat":
-				// slog.Info("Received heartbeat from peon", "peon", peonId)
 				updatePeonHeartbeat(db, peonId)
-			case "status_update":
-				slog.Info("Received status update from peon", "peon", peonId)
-				if wsMsg.Message != nil {
-					if status, ok := (*wsMsg.Message)["status"].(string); ok {
-						_, err := db.Exec("UPDATE peon SET status = ? WHERE id = ?", status, peonId)
-						if err != nil {
-							slog.Error("Failed to update peon status", "err", err)
-						}
-					}
-				}
 			case "task_done":
 				slog.Info("Received task done from peon", "peon", peonId)
 				if wsMsg.Message != nil {
@@ -594,25 +709,11 @@ func createWsHandler(db *sql.DB) http.HandlerFunc {
 							}
 						}
 					}
-
-					// update peon status to idle
-					_, err := db.Exec("UPDATE peon SET status = 'IDLE' WHERE id = ?", peonId)
-					if err != nil {
-						slog.Error("Failed to update peon status", "err", err)
-					}
 				}
 			case "ack":
 				slog.Info("Got acknowledgement from ", "peon", peonId)
 				if wsMsg.Message != nil {
 					if taskID, ok := (*wsMsg.Message)["id"].(string); ok {
-
-						// Update peon status to "WORKING"
-						_, err = db.Exec("UPDATE peon SET status = 'WORKING' WHERE id = ?", peonId)
-						if err != nil {
-							slog.Error("Failed to update peon status", "err", err)
-							continue
-						}
-
 						// Update task status to RUNNING
 						_, err = db.Exec("UPDATE bountyboard SET status = 'RUNNING', peon_id = ? WHERE id = ?", peonId, taskID)
 						if err != nil {
@@ -684,6 +785,14 @@ func setupDatabase(db *sql.DB) {
 		WHERE
 		    id = NEW.id;
 		END`,
+		`
+		CREATE TABLE IF NOT EXISTS stats (
+			id INTEGER PRIMARY KEY,
+			type TEXT NOT NULL,
+			value TEXT NOT NULL,
+			created_at TIMESTAMP DEFAULT (datetime ('now'))
+		);
+		`,
 	}
 
 	for _, q := range queries {
@@ -691,6 +800,11 @@ func setupDatabase(db *sql.DB) {
 		if err != nil {
 			slog.Error("Error executing query", "query", q, "err", err)
 		}
+	}
+
+	_, err := db.Exec("UPDATE peon SET status = 'OFFLINE'")
+	if err != nil {
+		slog.Error("Error setting all peons to offline", "err", err)
 	}
 
 }
@@ -706,7 +820,7 @@ func main() {
 	setupDatabase(db)
 	setupCronJobs(db)
 
-	registry = NewConnectionRegistry()
+	registry = NewConnectionRegistry(db)
 	taskProcessor = NewTaskProcessor(db, registry)
 	taskProcessor.Start()
 	fs := http.FileServer(http.Dir("static"))
@@ -728,7 +842,10 @@ func main() {
 		}
 	})
 	http.HandleFunc("GET /api/peons", authMiddleware(createGetAllPeonsHandler(db)))
-	http.HandleFunc("POST /api/tasks", authMiddleware(createCreateTaskHandler(db)))
+	http.HandleFunc("POST /api/tasks", authMiddleware(createPostTaskHandler(db)))
+	http.HandleFunc("POST /api/tasks/{id}/update", authMiddleware(createPostTaskUpdateHandler(db)))
+	http.HandleFunc("POST /api/tasks/{id}/acknowledgement", authMiddleware(createPostTaskAcknowledgementHandler(db)))
+	http.HandleFunc("POST /api/peons/{id}/statistics", authMiddleware(createPostStatisticsHandler(db)))
 	slog.Info("Building Stronghold on port 6112")
 	http.ListenAndServe(":6112", nil)
 }
