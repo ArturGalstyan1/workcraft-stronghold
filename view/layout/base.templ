@@ -10,49 +10,23 @@ templ Base() {
 			<link rel="stylesheet" href="/static/css/output.css"/>
 			<script src="https://code.jquery.com/jquery-3.7.1.min.js" integrity="sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo=" crossorigin="anonymous"></script>
 			<script defer>
-                // Auth check function
-                function checkAuth() {
-                    const token = localStorage.getItem('token');
-                    if (!token && window.location.pathname !== '/login') {
-                        window.location.href = '/login';
-                        return false;
-                    }
-                    return true;
-                }
 
-                // Check auth on page load
-                checkAuth();
+    const originalFetch = window.fetch;
 
-                // Setup auth interceptor for all fetch requests
-                const originalFetch = window.fetch;
-                window.fetch = async function(url, options = {}) {
-                    if (!url.includes('/login')) {
-                        const token = localStorage.getItem('token');
-                        if (!token) {
-                            window.location.href = '/login';
-                            return;
-                        }
-
-                        options.headers = {
-                            ...options.headers,
-                            'Authorization': `Bearer ${token}`
-                        };
-                    }
-
-                    try {
-                        const response = await originalFetch(url, options);
-                        if (response.status === 401) {
-                            localStorage.removeItem('token');
-                            window.location.href = '/login';
-                            return;
-                        }
-                        return response;
-                    } catch (error) {
-                        console.error('Fetch error:', error);
-                        throw error;
-                    }
-                };
-            </script>
+    window.fetch = async function(url, options = {}) {
+        try {
+            const response = await originalFetch(url, options);
+            if (response.status === 401) {
+                window.location.replace('/login');
+                return;
+            }
+            return response;
+        } catch (error) {
+            console.error('Fetch error:', error);
+            throw error;
+        }
+    };
+    </script>
 		</head>
 		<body class="">
 			{ children... }

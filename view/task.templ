@@ -1,0 +1,66 @@
+package view
+
+import (
+	"encoding/json"
+	"github.com/Artur-Galstyan/workcraft-stronghold/models"
+	"github.com/Artur-Galstyan/workcraft-stronghold/view/layout"
+)
+
+templ Task(task models.Task) {
+	@layout.Base() {
+		<script>
+        $(function() {
+            const currentUrl = new URL(window.location.href);
+            const isHTTPS = currentUrl.protocol === 'https:';
+
+            const wsProtocol = isHTTPS ? 'wss:' : 'ws:';
+            const wsUrl = `${wsProtocol}//${currentUrl.host}/ws/chieftain`;
+
+            const socket = new WebSocket(wsUrl);
+
+            socket.onopen = function() {
+              console.log('Connected');
+              reconnectAttempts = 0; // Reset reconnect attempts on successful connection
+            };
+
+            socket.onmessage = function(e) {
+              console.log('Received:', e.data);
+            };
+
+            socket.onerror = function(error) {
+              console.error('WebSocket error:', error);
+            };
+
+            socket.onclose = function(e) {
+              console.log('Disconnected:', e.code, e.reason);
+              socket = null;
+
+              // Attempt to reconnect
+              if (reconnectAttempts < maxReconnectAttempts) {
+                reconnectAttempts++;
+                setTimeout(connect, reconnectDelay);
+              }
+            };
+        });
+        </script>
+		<div>
+			<h1 class="text-2xl font-bold">Task</h1>
+			<p class="mt-2">Task ID: { task.ID }</p>
+			<p class="mt-2">Task Name: { task.TaskName }</p>
+			<p class="mt-2">Task Status: { string(task.Status) }</p>
+			<p class="mt-2">
+				Result:
+				if task.Result != nil {
+					// Convert interface{} to JSON string for display
+					if resultBytes, err := json.Marshal(task.Result); err == nil {
+						{ string(resultBytes) }
+					} else {
+						"Error displaying result"
+					}
+				} else {
+					"No result"
+				}
+			</p>
+		</div>
+	}
+}

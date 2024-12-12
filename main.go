@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Artur-Galstyan/workcraft-stronghold/models"
 	"github.com/Artur-Galstyan/workcraft-stronghold/view"
 	"github.com/a-h/templ"
 	"github.com/golang-jwt/jwt/v5"
@@ -30,6 +31,7 @@ var (
 	registry      *ConnectionRegistry
 	taskProcessor *TaskProcessor
 	db            *sql.DB
+	chieftainConn *websocket.Conn
 )
 
 const (
@@ -46,71 +48,9 @@ type ConnectionRegistry struct {
 type TaskProcessor struct {
 	db        *sql.DB
 	registry  *ConnectionRegistry
-	taskQueue chan Task
+	taskQueue chan models.Task
 	mu        sync.RWMutex
 	running   bool
-}
-
-type WebSocketMessage struct {
-	Type    string                  `json:"type"`
-	Message *map[string]interface{} `json:"message,omitempty"`
-}
-
-type Credentials struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
-}
-
-type Claims struct {
-	jwt.RegisteredClaims
-	APIKey string `json:"api_key"`
-}
-
-type TaskAcknowledgement struct {
-	PeonID string `json:"peon_id"`
-}
-
-type TaskStatus string
-
-const (
-	TaskStatusPending TaskStatus = "PENDING"
-	TaskStatusRunning TaskStatus = "RUNNING"
-	TaskStatusSuccess TaskStatus = "SUCCESS"
-	TaskStatusFailure TaskStatus = "FAILURE"
-	TaskStatusInvalid TaskStatus = "INVALID"
-)
-
-// TaskPayload represents the arguments and parameters for task execution
-type TaskPayload struct {
-	TaskArgs             []interface{}          `json:"task_args"`
-	TaskKwargs           map[string]interface{} `json:"task_kwargs"`
-	PrerunHandlerArgs    []interface{}          `json:"prerun_handler_args"`
-	PrerunHandlerKwargs  map[string]interface{} `json:"prerun_handler_kwargs"`
-	PostrunHandlerArgs   []interface{}          `json:"postrun_handler_args"`
-	PostrunHandlerKwargs map[string]interface{} `json:"postrun_handler_kwargs"`
-}
-
-type Task struct {
-	ID             string      `json:"id"`
-	TaskName       string      `json:"task_name"`
-	Status         TaskStatus  `json:"status"`
-	CreatedAt      time.Time   `json:"created_at"`
-	UpdatedAt      time.Time   `json:"updated_at"`
-	PeonId         *string     `json:"peon_id"`
-	Queue          string      `json:"queue"`
-	Payload        TaskPayload `json:"payload"`
-	Result         interface{} `json:"result"`
-	RetryOnFailure bool        `json:"retry_on_failure"`
-	RetryCount     int         `json:"retry_count"`
-	RetryLimit     int         `json:"retry_limit"`
-}
-
-type Peon struct {
-	Id            string  `json:"id"`
-	Status        string  `json:"status"`
-	LastHeartbeat string  `json:"last_heartbeat"`
-	CurrentTask   *string `json:"current_task"`
-	Queues        *string `json:"queues"`
 }
 
 func NewConnectionRegistry(db *sql.DB) *ConnectionRegistry {
@@ -123,7 +63,7 @@ func NewTaskProcessor(db *sql.DB, registry *ConnectionRegistry) *TaskProcessor {
 	return &TaskProcessor{
 		db:        db,
 		registry:  registry,
-		taskQueue: make(chan Task, 100),
+		taskQueue: make(chan models.Task, 100),
 		running:   false,
 	}
 }
@@ -155,7 +95,6 @@ func (tp *TaskProcessor) processQueue() {
 	for task := range tp.taskQueue {
 		// sleep for a second
 		// time.Sleep(1 * time.Second)
-
 		var count int
 		row := tp.db.QueryRow("SELECT COUNT(*) FROM peon WHERE status != 'OFFLINE'")
 		err := row.Scan(&count)
@@ -168,12 +107,15 @@ func (tp *TaskProcessor) processQueue() {
 			continue
 		}
 
-		message := WebSocketMessage{
+		message := models.WebSocketMessage{
 			Type: "new_task",
 			Message: &map[string]interface{}{
-				"id":        task.ID,
-				"task_name": task.TaskName,
-				"payload":   task.Payload,
+				"id":               task.ID,
+				"task_name":        task.TaskName,
+				"payload":          task.Payload,
+				"retry_on_failure": task.RetryOnFailure,
+				"retry_limit":      task.RetryLimit,
+				"retry_count":      task.RetryCount,
 			},
 		}
 
@@ -184,29 +126,38 @@ func (tp *TaskProcessor) processQueue() {
 		}
 
 		var peonId string
+		// Try to find an IDLE peon that handles this queue
 		err = tp.db.QueryRow(`
-			SELECT id FROM peon
-			WHERE status = 'IDLE'
-			ORDER BY last_heartbeat ASC
-			LIMIT 1
-		`).Scan(&peonId)
+            SELECT id FROM peon
+            WHERE status = 'IDLE'
+            AND (
+          		queues LIKE '[%''' || ? || '''%]'
+                OR queues IS NULL  -- matches SQL NULL
+            )
+            ORDER BY last_heartbeat ASC
+            LIMIT 1
+        `, task.Queue).Scan(&peonId)
 
 		if err == sql.ErrNoRows {
-			slog.Info("Failed to find idle peon", "err", err)
-		}
-		if err != nil {
-			slog.Info("Sending to peon with latest heartbeat")
-
+			// If no IDLE peon, try to find any active peon that handles this queue
 			err = tp.db.QueryRow(`
-				SELECT id FROM peon
-				WHERE status != 'OFFLINE'
-				ORDER BY last_heartbeat ASC
-				LIMIT 1
-			`).Scan(&peonId)
+                SELECT id FROM peon
+                WHERE status != 'OFFLINE'
+                AND (
+                		queues LIKE '[%''' || ? || '''%]'
+                        OR queues IS NULL  -- matches SQL NULL
+                )
+                ORDER BY last_heartbeat ASC
+                LIMIT 1
+            `, task.Queue).Scan(&peonId)
+
 			if err != nil {
-				slog.Error("Failed to find any peon", "err", err)
-				continue
+				slog.Error("Failed to find any available peon", "err", err)
+				continue // Skip this task if no peon is available
 			}
+		} else if err != nil {
+			slog.Error("Error querying for idle peon", "err", err)
+			continue
 		}
 
 		slog.Info("Sending task to peon", "taskID", task.ID, "peonId", peonId)
@@ -235,21 +186,24 @@ func (tp *TaskProcessor) scanForPendingTasks() {
 		select {
 		case <-ticker.C:
 			rows, err := tp.db.Query(`
-                            SELECT id, task_name, queue, payload
-                            FROM bountyboard
-                            WHERE status = 'PENDING'
-                            ORDER BY created_at ASC
-                            LIMIT 10
-                        `)
+				SELECT id, task_name, queue, payload, retry_count, retry_limit, retry_on_failure
+				FROM bountyboard
+				WHERE status = 'PENDING'
+				   OR (status = 'FAILURE'
+				       AND retry_on_failure = TRUE
+				       AND retry_count < retry_limit
+				       AND updated_at < datetime('now', '-1 minutes'))
+				ORDER BY created_at ASC
+				LIMIT 10`)
 			if err != nil {
 				slog.Error("Error querying pending tasks", "err", err)
 				continue
 			}
 
 			for rows.Next() {
-				var task Task
+				var task models.Task
 				var payloadJSON string
-				err := rows.Scan(&task.ID, &task.TaskName, &task.Queue, &payloadJSON)
+				err := rows.Scan(&task.ID, &task.TaskName, &task.Queue, &payloadJSON, &task.RetryCount, &task.RetryLimit, &task.RetryOnFailure)
 				if err != nil {
 					slog.Error("Error scanning task", "err", err)
 					continue
@@ -262,15 +216,15 @@ func (tp *TaskProcessor) scanForPendingTasks() {
 					continue
 				}
 
-				// Add to processing queue
-				tp.taskQueue <- task
+				slog.Info("Adding task to queue", "taskID", task.ID, "taskName", task.TaskName, "retryCount", task.RetryCount, "retryLimit", task.RetryLimit)
+				tp.AddTask(task)
 			}
 			rows.Close()
 		}
 	}
 }
 
-func (tp *TaskProcessor) AddTask(task Task) {
+func (tp *TaskProcessor) AddTask(task models.Task) {
 	tp.taskQueue <- task
 }
 
@@ -329,7 +283,7 @@ func markPeonOffline(db *sql.DB, peonID string) {
 }
 
 func loginHandler(w http.ResponseWriter, r *http.Request) {
-	var creds Credentials
+	var creds models.Credentials
 	if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
@@ -343,7 +297,7 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Create the JWT claims
 	now := time.Now()
-	claims := Claims{
+	claims := models.Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(now.Add(TokenExpiration)),
 			IssuedAt:  jwt.NewNumericDate(now),
@@ -361,67 +315,154 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]string{
-		"token": signedToken,
+	http.SetCookie(w, &http.Cookie{
+		Name:     "workcraft_auth",
+		Value:    signedToken,
+		HttpOnly: true,  // Cannot be accessed by JavaScript
+		Secure:   false, // false for development, true for production
+		SameSite: http.SameSiteStrictMode,
+		Path:     "/",
+		MaxAge:   int(TokenExpiration.Seconds()), // Match JWT expiration
 	})
 }
 
 func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		authHeader := r.Header.Get("Authorization")
-		if strings.HasPrefix(authHeader, "Bearer ") {
-			tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-
-			// Parse and validate the token using the API key as secret
-			token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
-				if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-					return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-				}
-				return []byte(os.Getenv("WORKCRAFT_API_KEY")), nil
-			})
-
-			if err != nil {
-				slog.Error("Invalid JWT", "err", err)
-				http.Error(w, "Unauthorized", http.StatusUnauthorized)
-				return
-			}
-
-			if claims, ok := token.Claims.(*Claims); ok && token.Valid {
-				// Add the API key to the request for downstream handlers
-				r.Header.Set("WORKCRAFT_API_KEY", claims.APIKey)
+		// 1. Check for API key first (service-to-service)
+		token := r.Header.Get("WORKCRAFT_API_KEY")
+		if token != "" {
+			// Use constant-time comparison for API key
+			if subtle.ConstantTimeCompare([]byte(token), []byte(hashedApiKey)) == 1 {
 				next.ServeHTTP(w, r)
 				return
 			}
-		}
-
-		// Fall back to API key check for service-to-service calls
-		token := r.Header.Get("WORKCRAFT_API_KEY")
-		if token == "" {
-			slog.Error("No authentication provided")
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
 
-		if subtle.ConstantTimeCompare([]byte(token), []byte(hashedApiKey)) != 1 {
-			slog.Error("Invalid API key provided")
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		// 2. Check for JWT cookie (browser-based)
+		cookie, err := r.Cookie("workcraft_auth")
+		if err != nil {
+			// For API requests, return 401
+			if strings.HasPrefix(r.URL.Path, "/api/") {
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+			// For page requests, redirect to login
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
 
+		// Validate JWT
+		token = cookie.Value
+		claims := &models.Claims{}
+		jwtToken, err := jwt.ParseWithClaims(token, claims, func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+			return []byte(os.Getenv("WORKCRAFT_API_KEY")), nil
+		})
+
+		if err != nil || !jwtToken.Valid {
+			// For API requests, return 401
+			if strings.HasPrefix(r.URL.Path, "/api/") {
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+			// For page requests, redirect to login
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+
+		// JWT is valid, set API key from claims and continue
+		r.Header.Set("WORKCRAFT_API_KEY", claims.APIKey)
 		next.ServeHTTP(w, r)
 	}
 }
 
 func setupCronJobs(db *sql.DB) {
 	c := cron.New()
+	var cronMutex sync.Mutex
 
 	c.AddFunc("* * * * *", func() {
-		query := `UPDATE peon SET status = 'OFFLINE' WHERE last_heartbeat < datetime('now', '-1 minutes')`
+		cronMutex.Lock()
+		defer cronMutex.Unlock()
+		query := `UPDATE peon SET status = 'OFFLINE', current_task = NULL WHERE last_heartbeat < datetime('now', '-1 minutes')`
 
 		_, err := db.Exec(query)
 		if err != nil {
 			slog.Error("Failed to clean up dead peons", "err", err)
 			return
+		}
+
+	})
+
+	c.AddFunc("* * * * *", func() {
+		cronMutex.Lock()
+		defer cronMutex.Unlock()
+
+		tx, err := db.Begin()
+		if err != nil {
+			slog.Error("Failed to start transaction", "err", err)
+			return
+		}
+
+		defer tx.Rollback()
+
+		query := `
+    UPDATE bountyboard
+    SET status = 'PENDING',
+        peon_id = NULL
+    WHERE status = 'RUNNING'
+    AND peon_id IS NOT NULL
+    AND (
+        -- Either peon is offline
+        NOT EXISTS (
+            SELECT 1 FROM peon
+            WHERE peon.id = bountyboard.peon_id
+            AND peon.status != 'OFFLINE'
+        )
+        OR
+        -- Or peon is online but working on something else
+        EXISTS (
+            SELECT 1 FROM peon
+            WHERE peon.id = bountyboard.peon_id
+            AND peon.status != 'OFFLINE'
+            AND peon.current_task != bountyboard.id
+        )
+    )`
+
+		rows, err := tx.Query(query)
+		if err == sql.ErrNoRows {
+			return
+		}
+		if err != nil {
+			slog.Error("Failed to find inconsistent tasks", "err", err)
+		}
+		defer rows.Close()
+		i := 0
+		for rows.Next() {
+			var taskID string
+			err := rows.Scan(&taskID)
+			if err != nil {
+				slog.Error("Failed to extract ID into string", "err", err)
+			}
+
+			updateQuery := `UPDATE bountyboard SET status = 'PENDING', peon_id = NULL WHERE id = ?`
+			_, err = tx.Exec(updateQuery, taskID)
+			if err != nil {
+				slog.Error("Failed to update taskID back to PENDING after worker went offline: ", "err", err)
+			}
+			i++
+		}
+		err = tx.Commit()
+		if err != nil {
+			slog.Error("Failed to commit transaction", "err", err)
+			return
+		}
+
+		if i > 0 {
+			slog.Info("Reset tasks: ", "count", i)
 		}
 	})
 
@@ -446,6 +487,78 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
+var chieftainUpgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool {
+		token, err := r.Cookie("workcraft_auth")
+		if err != nil {
+			slog.Error("No JWT provided")
+		}
+		jwtToken := token.Value
+
+		if jwtToken == "" {
+			slog.Error("No JWT provided")
+			return false
+		}
+
+		claims := &models.Claims{}
+		t, err := jwt.ParseWithClaims(jwtToken, claims, func(token *jwt.Token) (interface{}, error) {
+			return []byte(os.Getenv("WORKCRAFT_API_KEY")), nil
+		})
+		if err != nil {
+			slog.Error("Invalid JWT", "err", err)
+			return false
+		}
+
+		if !t.Valid {
+			slog.Error("Invalid JWT")
+			return false
+		}
+		return true
+	},
+}
+
+func createTaskViewHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		taskID := r.PathValue("id")
+
+		if taskID == "" {
+			slog.Error("Task ID is required")
+			http.Error(w, "Task ID is required", http.StatusBadRequest)
+			return
+		}
+
+		var task models.Task
+		var payloadJSON string
+		err := db.QueryRow(`
+            SELECT id, status, created_at, updated_at, task_name,
+                   peon_id, queue, payload, result, retry_on_failure,
+                   retry_count, retry_limit
+            FROM bountyboard WHERE id = ?`, taskID).Scan(
+			&task.ID, &task.Status, &task.CreatedAt, &task.UpdatedAt,
+			&task.TaskName, &task.PeonId, &task.Queue, &payloadJSON,
+			&task.Result, &task.RetryOnFailure, &task.RetryCount, &task.RetryLimit)
+		if err == sql.ErrNoRows {
+			http.Error(w, "Task not found", http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			slog.Error("Failed to fetch task", "err", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+		err = json.Unmarshal([]byte(payloadJSON), &task.Payload)
+		if err != nil {
+			slog.Error("Error parsing payload", "err", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		// Render the template
+		component := view.Task(task)
+		templ.Handler(component).ServeHTTP(w, r)
+	}
+}
+
 func createPostTaskUpdateHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		taskID := r.PathValue("id")
@@ -454,9 +567,9 @@ func createPostTaskUpdateHandler(db *sql.DB) http.HandlerFunc {
 			http.Error(w, "Task ID is required", http.StatusBadRequest)
 			return
 		}
-		slog.Info("Received update for ", "id", taskID)
+		slog.Info("Received update for task", "id", taskID)
 
-		var task Task
+		var task models.Task
 		err := json.NewDecoder(r.Body).Decode(&task)
 		if err != nil {
 			slog.Error("Failed to decode request body", "err", err)
@@ -464,7 +577,8 @@ func createPostTaskUpdateHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		_, err = db.Exec("UPDATE bountyboard SET status = ?, peon_id = ?, retry_count = ? WHERE id = ?", task.Status, task.PeonId, task.RetryCount, taskID)
+		_, err = db.Exec("UPDATE bountyboard SET status = ?, peon_id = ?, retry_count = ?, result = ? WHERE id = ?", task.Status, task.PeonId, task.RetryCount, task.Result, taskID)
+
 		if err != nil {
 			slog.Error("Failed to update task status", "err", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -472,6 +586,14 @@ func createPostTaskUpdateHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		w.WriteHeader(http.StatusNoContent)
+
+		if chieftainConn != nil {
+			err := chieftainConn.WriteMessage(websocket.TextMessage, []byte(`{"type": "task_update", "message": {"task_id": "`+taskID+`"}}`))
+			if err != nil {
+				slog.Error("Failed to send task update to chieftain", "err", err)
+			}
+		}
+
 	}
 }
 
@@ -485,7 +607,7 @@ func createPostTaskAcknowledgementHandler(db *sql.DB) http.HandlerFunc {
 		}
 		slog.Info("Received acknowledge for ", "id", taskID)
 
-		var t TaskAcknowledgement
+		var t models.TaskAcknowledgement
 		err := json.NewDecoder(r.Body).Decode(&t)
 		if err != nil {
 			slog.Error("Failed to decode request body", "err", err)
@@ -549,10 +671,10 @@ func createGetAllPeonsHandler(db *sql.DB) http.HandlerFunc {
 		}
 		defer rows.Close()
 
-		var peons []Peon
+		var peons []models.Peon
 		for rows.Next() {
-			var p Peon
-			err := rows.Scan(&p.Id, &p.Status, &p.LastHeartbeat, &p.CurrentTask, &p.Queues)
+			var p models.Peon
+			err := rows.Scan(&p.ID, &p.Status, &p.LastHeartbeat, &p.CurrentTask, &p.Queues)
 			if err != nil {
 				slog.Error("Error scanning peon", "err", err)
 				continue
@@ -571,7 +693,7 @@ func createGetAllPeonsHandler(db *sql.DB) http.HandlerFunc {
 
 func createUpdatePeonHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var peon Peon
+		var peon models.Peon
 		err := json.NewDecoder(r.Body).Decode(&peon)
 		if err != nil {
 			slog.Error("Failed to decode request body", "err", err)
@@ -580,7 +702,7 @@ func createUpdatePeonHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		query := `UPDATE peon SET status = ?, last_heartbeat = ?, current_task = ?, queues = ? WHERE id = ?`
-		_, err = db.Exec(query, peon.Status, peon.LastHeartbeat, peon.CurrentTask, peon.Queues, peon.Id)
+		_, err = db.Exec(query, peon.Status, peon.LastHeartbeat, peon.CurrentTask, peon.Queues, peon.ID)
 		if err != nil {
 			slog.Error("Failed to update peon", "err", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -594,7 +716,7 @@ func createUpdatePeonHandler(db *sql.DB) http.HandlerFunc {
 
 func createPostTaskHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		task := Task{}
+		task := models.Task{}
 		err := json.NewDecoder(r.Body).Decode(&task)
 		if err != nil {
 			slog.Error("Failed to decode request body", "err", err)
@@ -608,7 +730,7 @@ func createPostTaskHandler(db *sql.DB) http.HandlerFunc {
 			http.Error(w, "Task name is required", http.StatusBadRequest)
 			return
 		}
-		task.Status = TaskStatusPending
+		task.Status = models.TaskStatusPending
 
 		slog.Info("Creating task with ID and name", "id", task.ID, "name", task.TaskName)
 		payloadJSON, err := json.Marshal(task.Payload)
@@ -638,9 +760,14 @@ func createPostTaskHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-func insertPeonIntoDb(db *sql.DB, peonId string) {
-	query := `INSERT INTO peon (id) VALUES (?) ON CONFLICT (id) DO UPDATE SET status = 'IDLE'`
-	_, err := db.Exec(query, peonId)
+func insertPeonIntoDb(db *sql.DB, peonId string, peonQueues string) {
+	var queues interface{} = nil
+	if peonQueues != "NULL" {
+		queues = peonQueues
+	}
+
+	query := `INSERT INTO peon (id, queues) VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET status = 'IDLE'`
+	_, err := db.Exec(query, peonId, queues)
 	if err != nil {
 		slog.Error("Error inserting peon into db", "err", err)
 	}
@@ -654,6 +781,29 @@ func updatePeonHeartbeat(db *sql.DB, peonId string) {
 	}
 }
 
+func chieftainWsHandler(w http.ResponseWriter, r *http.Request) {
+	conn, err := chieftainUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		slog.Info("upgrade failed: ", "err", err)
+		return
+	}
+	chieftainConn = conn
+	defer func() {
+		slog.Info("Chieftain disconnected")
+		conn.Close()
+	}()
+
+	for {
+		_, _, err := conn.ReadMessage()
+		if err != nil {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				slog.Error("websocket error:", "err", err)
+			}
+			break
+		}
+	}
+}
+
 func createWsHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
@@ -662,9 +812,10 @@ func createWsHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 		peonId := r.URL.Query().Get("peon")
-		slog.Info("Peon with id connected", "id", peonId)
+		peonQueues := r.URL.Query().Get("queues")
+		slog.Info("Peon with id connected", "id", peonId, "queues", peonQueues)
 
-		insertPeonIntoDb(db, peonId)
+		insertPeonIntoDb(db, peonId, peonQueues)
 		registry.Add(peonId, conn)
 
 		defer func() {
@@ -688,7 +839,7 @@ func createWsHandler(db *sql.DB) http.HandlerFunc {
 				break
 			}
 
-			var wsMsg WebSocketMessage
+			var wsMsg models.WebSocketMessage
 			if err := json.Unmarshal(msg, &wsMsg); err != nil {
 				slog.Error("failed to parse message", "err", err, "msg", string(msg))
 				continue
@@ -754,7 +905,8 @@ func setupDatabase(db *sql.DB) {
 		            'RUNNING',
 		            'SUCCESS',
 		            'FAILURE',
-		            'INVALID'
+		            'INVALID',
+	                'CANCELLED'
 		        )
 		    ),
 		    created_at TIMESTAMP DEFAULT (datetime ('now')),
@@ -830,18 +982,22 @@ func main() {
 
 	http.Handle("/", templ.Handler(component))
 	http.HandleFunc("/ws", createWsHandler(db))
+	http.HandleFunc("/ws/chieftain", chieftainWsHandler)
 	http.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			component := view.Login()
 			templ.Handler(component).ServeHTTP(w, r)
 		case http.MethodPost:
+
 			loginHandler(w, r)
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
 	})
+	http.HandleFunc("GET /task/{id}", authMiddleware(createTaskViewHandler(db)))
 	http.HandleFunc("GET /api/peons", authMiddleware(createGetAllPeonsHandler(db)))
+	http.HandleFunc("POST /api/peons/{id}/update", authMiddleware(createUpdatePeonHandler(db)))
 	http.HandleFunc("POST /api/tasks", authMiddleware(createPostTaskHandler(db)))
 	http.HandleFunc("POST /api/tasks/{id}/update", authMiddleware(createPostTaskUpdateHandler(db)))
 	http.HandleFunc("POST /api/tasks/{id}/acknowledgement", authMiddleware(createPostTaskAcknowledgementHandler(db)))

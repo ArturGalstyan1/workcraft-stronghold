@@ -8,7 +8,8 @@ dev:
 	npx tailwindcss -i ./static/css/input.css -o ./static/css/output.css --watch & \
 	wait
 
-create_db:
+recreate_db:
+	@rm workcraft.db
 	@sqlite3 workcraft.db ".databases" ".quit"
 	@echo "Database created"
 
