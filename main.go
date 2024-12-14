@@ -517,6 +517,109 @@ var chieftainUpgrader = websocket.Upgrader{
 	},
 }
 
+func createPeonView(w http.ResponseWriter, r *http.Request) {
+
+	peonID := r.PathValue("id")
+
+	if peonID == "" {
+		slog.Error("Peon ID is required")
+		http.Error(w, "Peon ID is required", http.StatusBadRequest)
+		return
+	}
+
+	component := view.Peon(peonID)
+	templ.Handler(component).ServeHTTP(w, r)
+}
+
+func createGetPeonTaskHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+
+		peonID := r.PathValue("id")
+
+		if peonID == "" {
+			slog.Error("Peon ID is required")
+			http.Error(w, "Peon ID is required", http.StatusBadRequest)
+			return
+		}
+
+		rows, err := db.Query("SELECT * FROM bountyboard WHERE peon_id = ?", peonID)
+		if err != nil {
+			slog.Error("Error querying tasks", "err", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		defer rows.Close()
+
+		var tasks []models.Task
+
+		for rows.Next() {
+			var task models.Task
+			var payloadJSON string
+
+			err := rows.Scan(&task.ID, &task.Status, &task.CreatedAt, &task.UpdatedAt, &task.TaskName, &task.PeonId, &task.Queue, &payloadJSON, &task.Result, &task.RetryOnFailure, &task.RetryCount, &task.RetryLimit)
+
+			if err != nil {
+				slog.Error("Error scanning task", "err", err)
+				continue
+			}
+
+			err = json.Unmarshal([]byte(payloadJSON), &task.Payload)
+			if err != nil {
+				slog.Error("Error parsing payload", "err", err)
+				continue
+			}
+
+			tasks = append(tasks, task)
+		}
+
+		if len(tasks) == 0 {
+			tasks = []models.Task{}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		err = json.NewEncoder(w).Encode(tasks)
+		if err != nil {
+			slog.Error("Failed to encode tasks", "err", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+	}
+}
+
+func createGetPeonHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		peonID := r.PathValue("id")
+
+		if peonID == "" {
+			slog.Error("Peon ID is required")
+			http.Error(w, "Peon ID is required", http.StatusBadRequest)
+			return
+		}
+
+		var peon models.Peon
+
+		err := db.QueryRow("SELECT * FROM peon WHERE id = ?", peonID).Scan(&peon.ID, &peon.Status, &peon.LastHeartbeat, &peon.CurrentTask, &peon.Queues)
+		if err == sql.ErrNoRows {
+			http.Error(w, "Peon not found", http.StatusNotFound)
+			return
+		}
+
+		if err != nil {
+			slog.Error("Failed to fetch peon", "err", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		err = json.NewEncoder(w).Encode(peon)
+		if err != nil {
+			slog.Error("Failed to encode peon", "err", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
+	}
+}
+
 func createTaskViewHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		taskID := r.PathValue("id")
@@ -559,7 +662,7 @@ func createTaskViewHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-func createPostTaskUpdateHandler(db *sql.DB) http.HandlerFunc {
+func createTaskUpdateHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		taskID := r.PathValue("id")
 		if taskID == "" {
@@ -569,31 +672,108 @@ func createPostTaskUpdateHandler(db *sql.DB) http.HandlerFunc {
 		}
 		slog.Info("Received update for task", "id", taskID)
 
-		var task models.Task
-		err := json.NewDecoder(r.Body).Decode(&task)
+		var update struct {
+			Status      *models.TaskStatus `json:"status,omitempty"`
+			PeonId      *string            `json:"peon_id,omitempty"`
+			RetryCount  *int               `json:"retry_count,omitempty"`
+			Result      interface{}        `json:"result,omitempty"`
+			Queue       *string            `json:"queue,omitempty"`
+			RetryLimit  *int               `json:"retry_limit,omitempty"`
+			RetryOnFail *bool              `json:"retry_on_failure,omitempty"`
+		}
+
+		err := json.NewDecoder(r.Body).Decode(&update)
 		if err != nil {
 			slog.Error("Failed to decode request body", "err", err)
 			http.Error(w, "Invalid request body", http.StatusBadRequest)
 			return
 		}
 
-		_, err = db.Exec("UPDATE bountyboard SET status = ?, peon_id = ?, retry_count = ?, result = ? WHERE id = ?", task.Status, task.PeonId, task.RetryCount, task.Result, taskID)
+		// Build dynamic query
+		query := "UPDATE bountyboard SET"
+		var args []interface{}
+		var setClauses []string
 
+		if update.Status != nil {
+			setClauses = append(setClauses, "status = ?")
+			args = append(args, *update.Status)
+		}
+		if update.PeonId != nil {
+			setClauses = append(setClauses, "peon_id = ?")
+			args = append(args, update.PeonId)
+		}
+		if update.RetryCount != nil {
+			setClauses = append(setClauses, "retry_count = ?")
+			args = append(args, *update.RetryCount)
+		}
+		if update.Result != nil {
+			setClauses = append(setClauses, "result = ?")
+			args = append(args, update.Result)
+		}
+		if update.Queue != nil {
+			setClauses = append(setClauses, "queue = ?")
+			args = append(args, *update.Queue)
+		}
+		if update.RetryLimit != nil {
+			setClauses = append(setClauses, "retry_limit = ?")
+			args = append(args, *update.RetryLimit)
+		}
+		if update.RetryOnFail != nil {
+			setClauses = append(setClauses, "retry_on_failure = ?")
+			args = append(args, *update.RetryOnFail)
+		}
+
+		if len(setClauses) == 0 {
+			http.Error(w, "No fields to update", http.StatusBadRequest)
+			return
+		}
+
+		query += " " + strings.Join(setClauses, ", ")
+		query += " WHERE id = ?"
+		args = append(args, taskID)
+
+		_, err = db.Exec(query, args...)
 		if err != nil {
-			slog.Error("Failed to update task status", "err", err)
+			slog.Error("Failed to update task", "err", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
 		}
 
-		w.WriteHeader(http.StatusNoContent)
+		// Fetch updated task for websocket notification
+		var updatedTask models.Task
+		var payloadJSON string
+		err = db.QueryRow(`
+            SELECT id, status, created_at, updated_at, task_name,
+                   peon_id, queue, payload, result, retry_on_failure,
+                   retry_count, retry_limit
+            FROM bountyboard WHERE id = ?`, taskID).Scan(
+			&updatedTask.ID, &updatedTask.Status, &updatedTask.CreatedAt,
+			&updatedTask.UpdatedAt, &updatedTask.TaskName, &updatedTask.PeonId,
+			&updatedTask.Queue, &payloadJSON, &updatedTask.Result,
+			&updatedTask.RetryOnFailure, &updatedTask.RetryCount, &updatedTask.RetryLimit)
 
-		if chieftainConn != nil {
-			err := chieftainConn.WriteMessage(websocket.TextMessage, []byte(`{"type": "task_update", "message": {"task_id": "`+taskID+`"}}`))
+		if err != nil {
+			slog.Error("Failed to fetch updated task", "err", err)
+		} else {
+			err = json.Unmarshal([]byte(payloadJSON), &updatedTask.Payload)
 			if err != nil {
-				slog.Error("Failed to send task update to chieftain", "err", err)
+				slog.Error("Error parsing payload", "err", err)
+			} else if chieftainConn != nil {
+				taskJSON, err := json.Marshal(updatedTask)
+				if err != nil {
+					slog.Error("Failed to serialize updated task", "err", err)
+				} else {
+					message := fmt.Sprintf(`{"type": "task_update", "message": {"task": %s}}`,
+						string(taskJSON))
+					err := chieftainConn.WriteMessage(websocket.TextMessage, []byte(message))
+					if err != nil {
+						slog.Error("Failed to send task update to chieftain", "err", err)
+					}
+				}
 			}
 		}
 
+		w.WriteHeader(http.StatusNoContent)
 	}
 }
 
@@ -629,11 +809,13 @@ func createPostTaskAcknowledgementHandler(db *sql.DB) http.HandlerFunc {
 
 func createPostStatisticsHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		slog.Info("Received statistics update")
+		// slog.Info("Received statistics update")
 
 		var stats struct {
-			Type  string      `json:"type"`
-			Value interface{} `json:"value"`
+			Type   string      `json:"type"`
+			Value  interface{} `json:"value"`
+			PeonID *string     `json:"peon_id"`
+			TaskID *string     `json:"task_id"`
 		}
 
 		err := json.NewDecoder(r.Body).Decode(&stats)
@@ -650,8 +832,8 @@ func createPostStatisticsHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		query := `INSERT INTO stats (type, value) VALUES (?, ?)`
-		_, err = db.Exec(query, stats.Type, valueJSON)
+		query := `INSERT INTO stats (type, value, peon_id, task_id) VALUES (?, ?, ?, ?)`
+		_, err = db.Exec(query, stats.Type, valueJSON, stats.PeonID, stats.TaskID)
 		if err != nil {
 			slog.Error("Failed to insert statistics into database", "err", err)
 		}
@@ -663,6 +845,7 @@ func createPostStatisticsHandler(db *sql.DB) http.HandlerFunc {
 
 func createGetAllPeonsHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		slog.Info("GET /api/peons")
 		rows, err := db.Query("SELECT * FROM peon")
 		if err != nil {
 			slog.Error("Error querying peons", "err", err)
@@ -693,29 +876,116 @@ func createGetAllPeonsHandler(db *sql.DB) http.HandlerFunc {
 
 func createUpdatePeonHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var peon models.Peon
-		err := json.NewDecoder(r.Body).Decode(&peon)
+		var update struct {
+			Status        *string `json:"status,omitempty"`
+			LastHeartbeat *string `json:"last_heartbeat,omitempty"`
+			CurrentTask   *string `json:"current_task,omitempty"`
+			Queues        *string `json:"queues,omitempty"`
+		}
+
+		err := json.NewDecoder(r.Body).Decode(&update)
 		if err != nil {
 			slog.Error("Failed to decode request body", "err", err)
 			http.Error(w, "Invalid request body", http.StatusBadRequest)
 			return
 		}
 
-		query := `UPDATE peon SET status = ?, last_heartbeat = ?, current_task = ?, queues = ? WHERE id = ?`
-		_, err = db.Exec(query, peon.Status, peon.LastHeartbeat, peon.CurrentTask, peon.Queues, peon.ID)
+		// Build dynamic query
+		query := "UPDATE peon SET"
+		var args []interface{}
+		var setClauses []string
+
+		if update.Status != nil {
+			setClauses = append(setClauses, "status = ?")
+			args = append(args, *update.Status)
+		}
+		if update.LastHeartbeat != nil {
+			setClauses = append(setClauses, "last_heartbeat = ?")
+			args = append(args, *update.LastHeartbeat)
+		}
+		// Always include CurrentTask in update, even if nil
+		setClauses = append(setClauses, "current_task = ?")
+		if update.CurrentTask != nil {
+			args = append(args, *update.CurrentTask)
+		} else {
+			args = append(args, nil)
+		}
+		if update.Queues != nil {
+			setClauses = append(setClauses, "queues = ?")
+			args = append(args, *update.Queues)
+		}
+
+		if len(setClauses) == 0 {
+			http.Error(w, "No fields to update", http.StatusBadRequest)
+			return
+		}
+
+		query += " " + strings.Join(setClauses, ", ")
+		query += " WHERE id = ?"
+
+		peonID := r.PathValue("id")
+		args = append(args, peonID)
+
+		// Execute the update
+		_, err = db.Exec(query, args...)
 		if err != nil {
 			slog.Error("Failed to update peon", "err", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
 		}
 
-		w.WriteHeader(http.StatusNoContent)
+		// Construct updated peon directly from the update data
+		var (
+			currentTask *string
+			queues      *string
+		)
+		if update.CurrentTask != nil {
+			val := *update.CurrentTask
+			currentTask = &val
+		}
+		if update.Queues != nil {
+			val := *update.Queues
+			queues = &val
+		}
 
+		updatedPeon := models.Peon{
+			ID: peonID,
+		}
+
+		// Set only the fields that were updated
+		if update.Status != nil {
+			updatedPeon.Status = *update.Status
+		}
+		if update.LastHeartbeat != nil {
+			updatedPeon.LastHeartbeat = *update.LastHeartbeat
+		}
+		updatedPeon.CurrentTask = currentTask // Always set this, may be nil
+		if update.Queues != nil {
+			updatedPeon.Queues = queues
+		}
+
+		// If chieftain connection exists, send the update
+		if chieftainConn != nil {
+			peonJSON, err := json.Marshal(updatedPeon)
+			if err != nil {
+				slog.Error("Failed to serialize updated peon", "err", err)
+			} else {
+				message := fmt.Sprintf(`{"type": "peon_update", "message": {"peon": %s}}`,
+					string(peonJSON))
+				err := chieftainConn.WriteMessage(websocket.TextMessage, []byte(message))
+				if err != nil {
+					slog.Error("Failed to send peon update to chieftain", "err", err)
+				}
+			}
+		}
+
+		w.WriteHeader(http.StatusNoContent)
 	}
 }
 
 func createPostTaskHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		slog.Info("Received new task!")
 		task := models.Task{}
 		err := json.NewDecoder(r.Body).Decode(&task)
 		if err != nil {
@@ -942,7 +1212,11 @@ func setupDatabase(db *sql.DB) {
 			id INTEGER PRIMARY KEY,
 			type TEXT NOT NULL,
 			value TEXT NOT NULL,
-			created_at TIMESTAMP DEFAULT (datetime ('now'))
+			task_id CHAR(36),
+			peon_id CHAR(36),
+			created_at TIMESTAMP DEFAULT (datetime ('now')),
+			FOREIGN KEY (task_id) REFERENCES bountyboard (id),
+			FOREIGN KEY (peon_id) REFERENCES peon (id)
 		);
 		`,
 	}
@@ -996,12 +1270,17 @@ func main() {
 		}
 	})
 	http.HandleFunc("GET /task/{id}", authMiddleware(createTaskViewHandler(db)))
-	http.HandleFunc("GET /api/peons", authMiddleware(createGetAllPeonsHandler(db)))
-	http.HandleFunc("POST /api/peons/{id}/update", authMiddleware(createUpdatePeonHandler(db)))
-	http.HandleFunc("POST /api/tasks", authMiddleware(createPostTaskHandler(db)))
-	http.HandleFunc("POST /api/tasks/{id}/update", authMiddleware(createPostTaskUpdateHandler(db)))
-	http.HandleFunc("POST /api/tasks/{id}/acknowledgement", authMiddleware(createPostTaskAcknowledgementHandler(db)))
-	http.HandleFunc("POST /api/peons/{id}/statistics", authMiddleware(createPostStatisticsHandler(db)))
+	http.HandleFunc("GET /peon/{id}/", authMiddleware(createPeonView))
+
+	http.HandleFunc("GET /api/peon", authMiddleware(createGetAllPeonsHandler(db)))
+	http.HandleFunc("GET /api/peon/{id}", authMiddleware(createGetPeonHandler(db)))
+	http.HandleFunc("GET /api/peon/{id}/tasks", authMiddleware(createGetPeonTaskHandler(db)))
+	http.HandleFunc("POST /api/peon/{id}/update", authMiddleware(createUpdatePeonHandler(db)))
+	http.HandleFunc("POST /api/peon/{id}/statistics", authMiddleware(createPostStatisticsHandler(db)))
+	http.HandleFunc("POST /api/task", authMiddleware(createPostTaskHandler(db)))
+	http.HandleFunc("POST /api/task/{id}/update", authMiddleware(createTaskUpdateHandler(db)))
+	http.HandleFunc("POST /api/task/{id}/acknowledgement", authMiddleware(createPostTaskAcknowledgementHandler(db)))
+
 	slog.Info("Building Stronghold on port 6112")
 	http.ListenAndServe(":6112", nil)
 }

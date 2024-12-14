@@ -9,38 +9,23 @@ import (
 templ Task(task models.Task) {
 	@layout.Base() {
 		<script>
+        let reconnectAttempts = 0;
+        const maxReconnectAttempts = 5;
+        const reconnectDelay = 3000; // 3 seconds
+        let socket = null;
+
+
+
         $(function() {
-            const currentUrl = new URL(window.location.href);
-            const isHTTPS = currentUrl.protocol === 'https:';
-
-            const wsProtocol = isHTTPS ? 'wss:' : 'ws:';
-            const wsUrl = `${wsProtocol}//${currentUrl.host}/ws/chieftain`;
-
-            const socket = new WebSocket(wsUrl);
-
-            socket.onopen = function() {
-              console.log('Connected');
-              reconnectAttempts = 0; // Reset reconnect attempts on successful connection
+            function onMessage(e) {
+                const dataJSON = JSON.parse(e.data);
+                if (dataJSON.type === "task_update") {
+                    const updatedTask = dataJSON.message.task;
+                    console.log(updatedTask);
+                }
             };
 
-            socket.onmessage = function(e) {
-              console.log('Received:', e.data);
-            };
-
-            socket.onerror = function(error) {
-              console.error('WebSocket error:', error);
-            };
-
-            socket.onclose = function(e) {
-              console.log('Disconnected:', e.code, e.reason);
-              socket = null;
-
-              // Attempt to reconnect
-              if (reconnectAttempts < maxReconnectAttempts) {
-                reconnectAttempts++;
-                setTimeout(connect, reconnectDelay);
-              }
-            };
+            socket = window.connect(onMessage); // Initial connection
         });
         </script>
 		<div>
@@ -51,7 +36,6 @@ templ Task(task models.Task) {
 			<p class="mt-2">
 				Result:
 				if task.Result != nil {
-					// Convert interface{} to JSON string for display
 					if resultBytes, err := json.Marshal(task.Result); err == nil {
 						{ string(resultBytes) }
 					} else {

@@ -26,6 +26,41 @@ templ Base() {
             throw error;
         }
     };
+
+    window.connect = function(onMessage) {
+        const currentUrl = new URL(window.location.href);
+        const isHTTPS = currentUrl.protocol === 'https:';
+        const wsProtocol = isHTTPS ? 'wss:' : 'ws:';
+        const wsUrl = `${wsProtocol}//${currentUrl.host}/ws/chieftain`;
+
+        let socket = new WebSocket(wsUrl);
+
+        socket.onopen = function() {
+            console.log('Connected');
+            reconnectAttempts = 0; // Reset reconnect attempts on successful connection
+        };
+
+        socket.onmessage = function(e) {
+            onMessage(e);
+        };
+
+        socket.onerror = function(error) {
+            console.error('WebSocket error:', error);
+        };
+
+        socket.onclose = function(e) {
+            console.log('Disconnected:', e.code, e.reason);
+            socket = null;
+
+            // Attempt to reconnect
+            if (reconnectAttempts < maxReconnectAttempts) {
+                reconnectAttempts++;
+                setTimeout(connect, reconnectDelay);
+            }
+        };
+
+        return socket;
+    }
     </script>
 		</head>
 		<body class="">

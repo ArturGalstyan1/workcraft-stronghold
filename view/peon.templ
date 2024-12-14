@@ -1,0 +1,123 @@
+package view
+
+import "github.com/Artur-Galstyan/workcraft-stronghold/view/layout"
+
+templ Peon(peonID string) {
+	@layout.Base() {
+		@templ.JSONScript("peonID", peonID)
+		<script>
+		let reconnectAttempts = 0;
+        const maxReconnectAttempts = 5;
+        const reconnectDelay = 3000; // 3 seconds
+        let socket = null;
+
+
+        var peonID = JSON.parse(document.getElementById('peonID').innerText);
+
+
+        function setPeon(peon) {
+
+            $('#peon-id').text('Peon ID: ' + peon.id);
+            $('#peon-status').text('Peon Status: ' + peon.status);
+            $('#peon-heartbeat').text('Last Heartbeat: ' + peon.last_heartbeat.substring(0, 19).replace('T', ' '));
+            $('#peon-queues').text('Queues: ' + peon.queues);
+            if (peon.current_task != null) {
+                $('#peon-currenttask').text(peon.current_task);
+                $('#peon-currenttask').attr('href', peon.current_task);
+            } else {
+                $('#peon-currenttask').text('No active task');
+            }
+
+        }
+
+        $(function() {
+            function onmessage(e) {
+                const dataJSON = JSON.parse(e.data);
+                if (dataJSON.type === "peon_update") {
+                    const updatedPeon = dataJSON.message.peon;
+                    setPeon(updatedPeon);
+                }
+            };
+
+            socket = window.connect(onmessage);
+        });
+
+        $(document).ready(function() {
+            setInterval(async() => {
+                const dataPath = '/api/peon/' + peonID
+                const response = await fetch(dataPath);
+                if (!response.ok) {
+                    console.error('Failed to fetch peon data');
+                    return;
+                }
+                const peon = await response.json();
+                setPeon(peon);
+            }, 5000)
+
+            setInterval(async() => {
+                const dataPath = '/api/peon/' + peonID + "/tasks"
+                const response = await fetch(dataPath);
+                if (!response.ok) {
+                    console.error('Failed to fetch task history');
+                    return;
+                }
+
+                const tasks = await response.json();
+
+                $('#task-history').empty();
+
+                if ($('#table-wrapper').hasClass('skeleton')) {
+                    $('#table-wrapper').removeClass('skeleton');
+                }
+
+                tasks.forEach(task => {
+                  $('#task-history').append(`
+                    <tr>
+                    <td class="link">
+                    <a href="/task/${task.id}">
+
+                    ${task.id}
+                    </a>
+
+                    </td>
+                    <td>${task.task_name}</td>
+                    </tr>
+                    `);
+                });
+            }, 5000)
+        });
+
+        </script>
+		<div>
+			<h1 class="text-2xl font-bold">Peon</h1>
+			<p id="peon-id" class="mt-2">Peon ID: { peonID }</p>
+			<p id="peon-status" class="mt-2">Peon Status: Loading...</p>
+			<p id="peon-heartbeat" class="mt-2">Last Heartbeat: Loading...</p>
+			<p id="peon-queues" class="mt-2">Queues: Loading...</p>
+			<div>
+				<h2 class="text-xl font-bold">Current Task</h2>
+				<p class="mt-2">
+					<a id="peon-currenttask" href="#">
+						No active task
+					</a>
+				</p>
+			</div>
+		</div>
+		<div class="divider"></div>
+		<div class="my-12">
+			<h2 class="text-xl font-bold">Task History</h2>
+			<div id="table-wrapper" class="overflow-x-auto skeleton">
+				<table class="table">
+					<!-- head -->
+					<thead>
+						<tr>
+							<th>Task ID</th>
+							<th>Task Name</th>
+						</tr>
+					</thead>
+					<tbody id="task-history"></tbody>
+				</table>
+			</div>
+		</div>
+	}
+}
