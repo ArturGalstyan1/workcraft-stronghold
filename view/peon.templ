@@ -5,118 +5,201 @@ import "github.com/Artur-Galstyan/workcraft-stronghold/view/layout"
 templ Peon(peonID string) {
 	@layout.Base() {
 		@templ.JSONScript("peonID", peonID)
-		<script>
-		let reconnectAttempts = 0;
-        const maxReconnectAttempts = 5;
-        const reconnectDelay = 3000; // 3 seconds
-        let socket = null;
+		<script defer>
+            let socket = null;
+            const peonID = JSON.parse(document.getElementById('peonID').innerText);
+            console.log('Peon ID:', peonID);
 
+            function keepReconnecting() {
+                if (socket === null) {
+                    console.log('No socket, reconnecting');
+                    socket = window.getWebsocket();
 
-        var peonID = JSON.parse(document.getElementById('peonID').innerText);
+                    socket.onopen = function() {
+                        console.log('Connected');
+                        reconnectAttempts = 0;
+                    };
 
+                    socket.onmessage = function(e) {
+                        const data = JSON.parse(e.data);
+                        if (data.type === 'peon_update' && data.message.peon.id === peonID) {
+                            setPeon(data.message.peon);
+                        }
+                    };
 
-        function setPeon(peon) {
+                    socket.onerror = function(error) {
+                        console.error('WebSocket error:', error);
+                    };
 
-            $('#peon-id').text('Peon ID: ' + peon.id);
-            $('#peon-status').text('Peon Status: ' + peon.status);
-            $('#peon-heartbeat').text('Last Heartbeat: ' + peon.last_heartbeat.substring(0, 19).replace('T', ' '));
-            $('#peon-queues').text('Queues: ' + peon.queues);
-            if (peon.current_task != null) {
-                $('#peon-currenttask').text(peon.current_task);
-                $('#peon-currenttask').attr('href', peon.current_task);
-            } else {
-                $('#peon-currenttask').text('No active task');
+                    socket.onclose = function(e) {
+                        console.log('Disconnected:', e.code, e.reason);
+                        socket = null;
+                    };
+                }
             }
 
-        }
 
-        $(function() {
-            function onmessage(e) {
-                const dataJSON = JSON.parse(e.data);
-                if (dataJSON.type === "peon_update") {
-                    const updatedPeon = dataJSON.message.peon;
-                    setPeon(updatedPeon);
+            function setPeon(peon) {
+                // Update status with color coding
+                const statusEl = document.getElementById('peon-status');
+                statusEl.textContent = peon.status;
+                statusEl.className = `px-2 py-1 rounded-full text-sm inline-block ${
+                    peon.status === 'IDLE' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
+                }`;
+
+                // Format and set timestamp
+                const timestamp = new Date(peon.last_heartbeat)
+                    .toLocaleString('en-US', {
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit'
+                    });
+                document.getElementById('peon-heartbeat').textContent = timestamp;
+
+                // Update queues
+                document.getElementById('peon-queues').textContent =
+                    Array.isArray(peon.queues) ? peon.queues.join(', ') : peon.queues;
+
+                // Update current task
+                const taskEl = document.getElementById('peon-currenttask');
+                if (peon.current_task) {
+                    taskEl.href = `/task/${peon.current_task}`;
+                    taskEl.textContent = peon.current_task;
+                    taskEl.className = 'text-blue-600 hover:underline';
+                } else {
+                    taskEl.removeAttribute('href');
+                    taskEl.textContent = 'No active task';
+                    taskEl.className = 'text-gray-500';
                 }
-            };
+            }
 
-            socket = window.connect(onmessage);
-        });
+            function updateTaskHistory(tasks) {
+                const tbody = document.getElementById('task-history');
+                tbody.innerHTML = '';
 
-        $(document).ready(function() {
-            setInterval(async() => {
-                const dataPath = '/api/peon/' + peonID
-                const response = await fetch(dataPath);
-                if (!response.ok) {
-                    console.error('Failed to fetch peon data');
+                if (tasks.length === 0) {
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td colspan="2" class="text-center py-4 text-gray-500">
+                            No task history available
+                        </td>
+                    `;
+                    tbody.appendChild(row);
                     return;
-                }
-                const peon = await response.json();
-                setPeon(peon);
-            }, 5000)
-
-            setInterval(async() => {
-                const dataPath = '/api/peon/' + peonID + "/tasks"
-                const response = await fetch(dataPath);
-                if (!response.ok) {
-                    console.error('Failed to fetch task history');
-                    return;
-                }
-
-                const tasks = await response.json();
-
-                $('#task-history').empty();
-
-                if ($('#table-wrapper').hasClass('skeleton')) {
-                    $('#table-wrapper').removeClass('skeleton');
                 }
 
                 tasks.forEach(task => {
-                  $('#task-history').append(`
-                    <tr>
-                    <td class="link">
-                    <a href="/task/${task.id}">
-
-                    ${task.id}
-                    </a>
-
-                    </td>
-                    <td>${task.task_name}</td>
-                    </tr>
-                    `);
+                    const row = document.createElement('tr');
+                    row.className = 'hover:bg-gray-50';
+                    row.innerHTML = `
+                        <td class="px-4 py-3 border-b">
+                            <a href="/task/${task.id}" class="text-blue-600 hover:underline">
+                                ${task.id}
+                            </a>
+                        </td>
+                        <td class="px-4 py-3 border-b">${task.task_name}</td>
+                    `;
+                    tbody.appendChild(row);
                 });
-            }, 5000)
-        });
+            }
+
+
+            async function pollPeonData() {
+                try {
+                    const response = await fetch(`/api/peon/${peonID}`);
+                    if (!response.ok) throw new Error('Failed to fetch peon data');
+                    const peon = await response.json();
+                    setPeon(peon);
+                } catch (error) {
+                    console.error('Error polling peon data:', error);
+                }
+            }
+
+            async function pollTaskHistory() {
+                try {
+                    const response = await fetch(`/api/peon/${peonID}/tasks`);
+                    if (!response.ok) throw new Error('Failed to fetch task history');
+                    const tasks = await response.json();
+                    updateTaskHistory(tasks);
+                    document.getElementById('table-wrapper').classList.remove('animate-pulse');
+                } catch (error) {
+                    console.error('Error polling task history:', error);
+                }
+            }
+
+            $(document).ready(function() {
+              console.log('Document ready');
+              pollPeonData();
+              pollTaskHistory();
+
+              setInterval(keepReconnecting, 1000);
+              setInterval(pollPeonData, 5000);
+              setInterval(pollTaskHistory, 5000);
+            });
 
         </script>
-		<div>
-			<h1 class="text-2xl font-bold">Peon</h1>
-			<p id="peon-id" class="mt-2">Peon ID: { peonID }</p>
-			<p id="peon-status" class="mt-2">Peon Status: Loading...</p>
-			<p id="peon-heartbeat" class="mt-2">Last Heartbeat: Loading...</p>
-			<p id="peon-queues" class="mt-2">Queues: Loading...</p>
-			<div>
-				<h2 class="text-xl font-bold">Current Task</h2>
-				<p class="mt-2">
-					<a id="peon-currenttask" href="#">
-						No active task
+		<div class="max-w-4xl mx-auto p-6">
+			<!-- Peon Status Card -->
+			<div class="bg-gray-50 rounded-lg shadow-sm border border-gray-200 p-6 mb-8">
+				<h1 class="text-2xl font-bold mb-6 text-gray-700">Peon Status</h1>
+				<div class="grid gap-4 md:grid-cols-2">
+					<div class="space-y-4">
+						<div class="flex items-center gap-2">
+							<span class="font-medium">ID:</span>
+							<span class="font-mono text-sm">{ peonID }</span>
+						</div>
+						<div class="flex items-center gap-2">
+							<span class="font-medium">Status:</span>
+							<span id="peon-status" class="px-2 py-1 rounded-full text-sm bg-gray-100">
+								Loading...
+							</span>
+						</div>
+					</div>
+					<div class="space-y-4">
+						<div class="flex items-center gap-2">
+							<span class="font-medium">Last Heartbeat:</span>
+							<span id="peon-heartbeat" class="text-gray-600">Loading...</span>
+						</div>
+						<div class="flex items-center gap-2">
+							<span class="font-medium">Queues:</span>
+							<span id="peon-queues" class="text-gray-600">Loading...</span>
+						</div>
+					</div>
+				</div>
+				<div class="mt-4">
+					<span class="font-medium">Current Task:</span>
+					<a id="peon-currenttask" class="ml-2 text-gray-500">
+						Loading...
 					</a>
-				</p>
+				</div>
 			</div>
-		</div>
-		<div class="divider"></div>
-		<div class="my-12">
-			<h2 class="text-xl font-bold">Task History</h2>
-			<div id="table-wrapper" class="overflow-x-auto skeleton">
-				<table class="table">
-					<!-- head -->
-					<thead>
-						<tr>
-							<th>Task ID</th>
-							<th>Task Name</th>
-						</tr>
-					</thead>
-					<tbody id="task-history"></tbody>
-				</table>
+			<!-- Task History -->
+			<div class="bg-gray-50 rounded-lg shadow-sm border border-gray-200 p-6">
+				<h2 class="text-xl font-bold mb-6 text-gray-700">Task History</h2>
+				<div id="table-wrapper" class="overflow-x-auto animate-pulse">
+					<table class="min-w-full">
+						<thead class="bg-gray-100">
+							<tr>
+								<th class="px-4 py-3 text-left text-sm font-semibold text-gray-900 border-b">
+									Task ID
+								</th>
+								<th class="px-4 py-3 text-left text-sm font-semibold text-gray-900 border-b">
+									Task Name
+								</th>
+							</tr>
+						</thead>
+						<tbody id="task-history" class="divide-y divide-gray-200">
+							<tr>
+								<td colspan="2" class="text-center py-4 text-gray-500">
+									Loading...
+								</td>
+							</tr>
+						</tbody>
+					</table>
+				</div>
 			</div>
 		</div>
 	}

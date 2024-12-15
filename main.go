@@ -876,6 +876,7 @@ func createGetAllPeonsHandler(db *sql.DB) http.HandlerFunc {
 
 func createUpdatePeonHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		slog.Info("POST /api/peon/{id}/update")
 		var update struct {
 			Status        *string `json:"status,omitempty"`
 			LastHeartbeat *string `json:"last_heartbeat,omitempty"`
@@ -972,14 +973,116 @@ func createUpdatePeonHandler(db *sql.DB) http.HandlerFunc {
 			} else {
 				message := fmt.Sprintf(`{"type": "peon_update", "message": {"peon": %s}}`,
 					string(peonJSON))
+
 				err := chieftainConn.WriteMessage(websocket.TextMessage, []byte(message))
 				if err != nil {
 					slog.Error("Failed to send peon update to chieftain", "err", err)
 				}
 			}
 		}
-
 		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func createCancelTaskHandler(cr *ConnectionRegistry) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		slog.Info("POST /api/task/{id}/cancel")
+		taskID := r.PathValue("id")
+
+		if taskID == "" {
+			slog.Error("Task ID is required")
+			http.Error(w, "Task ID is required", http.StatusBadRequest)
+			return
+		}
+
+		slog.Info("Received cancel for task", "id", taskID)
+		var peonID string
+		var status string
+		err := cr.db.QueryRow("SELECT peon_id, status FROM bountyboard WHERE id = ?", taskID).Scan(&peonID, &status)
+		if err == sql.ErrNoRows {
+			http.Error(w, "Task not found", http.StatusNotFound)
+			return
+		}
+
+		if err != nil {
+			slog.Error("Failed to fetch task", "err", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		if status != "RUNNING" {
+			http.Error(w, "Task is not running", http.StatusBadRequest)
+			return
+		}
+
+		data := map[string]interface{}{
+			"type":    "cancel_task",
+			"message": taskID,
+		}
+
+		bytes, err := json.Marshal(data)
+		if err != nil {
+			slog.Error("Failed to marshal cancel message", "err", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		err = cr.SendMessage(peonID, bytes)
+		if err != nil {
+			slog.Error("Failed to send cancel message", "err", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		res := map[string]interface{}{
+			"send": "true",
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		err = json.NewEncoder(w).Encode(res)
+	}
+}
+
+func createGetTaskHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		slog.Info("GET /api/task/{id}")
+		taskID := r.PathValue("id")
+
+		if taskID == "" {
+			slog.Error("Task ID is required")
+			http.Error(w, "Task ID is required", http.StatusBadRequest)
+			return
+		}
+
+		var task models.Task
+		var payloadJSON string
+
+		err := db.QueryRow("SELECT * FROM bountyboard WHERE id = ?", taskID).Scan(&task.ID, &task.Status, &task.CreatedAt, &task.UpdatedAt, &task.TaskName, &task.PeonId, &task.Queue, &payloadJSON, &task.Result, &task.RetryOnFailure, &task.RetryCount, &task.RetryLimit)
+
+		if err == sql.ErrNoRows {
+			http.Error(w, "Task not found", http.StatusNotFound)
+			return
+		}
+
+		if err != nil {
+			slog.Error("Failed to fetch task", "err", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		err = json.Unmarshal([]byte(payloadJSON), &task.Payload)
+		if err != nil {
+			slog.Error("Error parsing payload", "err", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		err = json.NewEncoder(w).Encode(task)
+		if err != nil {
+			slog.Error("Failed to encode task", "err", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
 	}
 }
 
@@ -1063,6 +1166,7 @@ func chieftainWsHandler(w http.ResponseWriter, r *http.Request) {
 		conn.Close()
 	}()
 
+	slog.Info("Chieftain connected")
 	for {
 		_, _, err := conn.ReadMessage()
 		if err != nil {
@@ -1278,6 +1382,8 @@ func main() {
 	http.HandleFunc("POST /api/peon/{id}/update", authMiddleware(createUpdatePeonHandler(db)))
 	http.HandleFunc("POST /api/peon/{id}/statistics", authMiddleware(createPostStatisticsHandler(db)))
 	http.HandleFunc("POST /api/task", authMiddleware(createPostTaskHandler(db)))
+	http.HandleFunc("GET /api/task/{id}", authMiddleware(createGetTaskHandler(db)))
+	http.HandleFunc("POST /api/task/{id}/cancel", authMiddleware(createCancelTaskHandler(registry)))
 	http.HandleFunc("POST /api/task/{id}/update", authMiddleware(createTaskUpdateHandler(db)))
 	http.HandleFunc("POST /api/task/{id}/acknowledgement", authMiddleware(createPostTaskAcknowledgementHandler(db)))
 
