@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1043,6 +1044,89 @@ func createCancelTaskHandler(cr *ConnectionRegistry) http.HandlerFunc {
 	}
 }
 
+func createGetTasksHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		slog.Info("GET /api/tasks")
+
+		// Get query parameters
+		query := r.URL.Query()
+
+		// Parse count parameter, default to 0
+		count := 0
+		if countStr := query.Get("count"); countStr != "" {
+			var err error
+			count, err = strconv.Atoi(countStr)
+			if err != nil {
+				slog.Error("Invalid count parameter", "err", err)
+				http.Error(w, "Invalid count parameter", http.StatusBadRequest)
+				return
+			}
+		}
+
+		// Get order parameter
+		order := query.Get("order")
+
+		// Build SQL query
+		sqlQuery := "SELECT * FROM bountyboard"
+		if order != "" {
+			// Validate order parameter to prevent SQL injection
+			order = strings.ToUpper(order)
+			if order != "ASC" && order != "DESC" {
+				http.Error(w, "Invalid order parameter. Must be 'asc' or 'desc'", http.StatusBadRequest)
+				return
+			}
+			sqlQuery += " ORDER BY created_at " + order
+		} else {
+			sqlQuery += " ORDER BY created_at DESC"
+		}
+
+		if count > 0 {
+			sqlQuery += " LIMIT " + strconv.Itoa(count)
+		}
+
+		// Execute query and process results
+		rows, err := db.Query(sqlQuery)
+		if err != nil {
+			slog.Error("Error querying tasks", "err", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		var tasks []models.Task
+		for rows.Next() {
+			var task models.Task
+			var payloadJSON string
+			err := rows.Scan(&task.ID, &task.Status, &task.CreatedAt, &task.UpdatedAt,
+				&task.TaskName, &task.PeonId, &task.Queue, &payloadJSON,
+				&task.Result, &task.RetryOnFailure, &task.RetryCount, &task.RetryLimit)
+			if err != nil {
+				slog.Error("Error scanning task", "err", err)
+				continue
+			}
+
+			err = json.Unmarshal([]byte(payloadJSON), &task.Payload)
+			if err != nil {
+				slog.Error("Error parsing payload", "err", err)
+				continue
+			}
+
+			tasks = append(tasks, task)
+		}
+
+		if len(tasks) == 0 {
+			tasks = []models.Task{}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		err = json.NewEncoder(w).Encode(tasks)
+		if err != nil {
+			slog.Error("Error encoding tasks", "err", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
+	}
+}
+
 func createGetTaskHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		slog.Info("GET /api/task/{id}")
@@ -1381,8 +1465,10 @@ func main() {
 	http.HandleFunc("GET /api/peon/{id}/tasks", authMiddleware(createGetPeonTaskHandler(db)))
 	http.HandleFunc("POST /api/peon/{id}/update", authMiddleware(createUpdatePeonHandler(db)))
 	http.HandleFunc("POST /api/peon/{id}/statistics", authMiddleware(createPostStatisticsHandler(db)))
+
 	http.HandleFunc("POST /api/task", authMiddleware(createPostTaskHandler(db)))
 	http.HandleFunc("GET /api/task/{id}", authMiddleware(createGetTaskHandler(db)))
+	http.HandleFunc("GET /api/tasks", authMiddleware(createGetTasksHandler(db)))
 	http.HandleFunc("POST /api/task/{id}/cancel", authMiddleware(createCancelTaskHandler(registry)))
 	http.HandleFunc("POST /api/task/{id}/update", authMiddleware(createTaskUpdateHandler(db)))
 	http.HandleFunc("POST /api/task/{id}/acknowledgement", authMiddleware(createPostTaskAcknowledgementHandler(db)))
