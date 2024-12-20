@@ -11,12 +11,12 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Artur-Galstyan/workcraft-stronghold/models"
+	"github.com/Artur-Galstyan/workcraft-stronghold/utils"
 	"github.com/Artur-Galstyan/workcraft-stronghold/view"
 	"github.com/a-h/templ"
 	"github.com/golang-jwt/jwt/v5"
@@ -518,8 +518,16 @@ var chieftainUpgrader = websocket.Upgrader{
 	},
 }
 
-func createPeonView(w http.ResponseWriter, r *http.Request) {
+func taskView(w http.ResponseWriter, r *http.Request) {
+	component := view.Tasks()
+	templ.Handler(component).ServeHTTP(w, r)
+}
+func peonsView(w http.ResponseWriter, r *http.Request) {
+	component := view.Peons()
+	templ.Handler(component).ServeHTTP(w, r)
+}
 
+func peonView(w http.ResponseWriter, r *http.Request) {
 	peonID := r.PathValue("id")
 
 	if peonID == "" {
@@ -844,10 +852,43 @@ func createPostStatisticsHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-func createGetAllPeonsHandler(db *sql.DB) http.HandlerFunc {
+func createGetPeonsHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		slog.Info("GET /api/peons")
-		rows, err := db.Query("SELECT * FROM peon")
+		queryParams, err := utils.ParsePeonQuery(r.URL.Query().Get("query"))
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Invalid query: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		// First, get total count
+		countQuery, countArgs, err := utils.BuildPeonQuery(queryParams.Filter)
+		countQuery = strings.Replace(countQuery, "SELECT *", "SELECT COUNT(*)", 1)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Invalid filter: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		var totalItems int
+		err = db.QueryRow(countQuery, countArgs...).Scan(&totalItems)
+		if err != nil {
+			slog.Error("Error counting peons", "err", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		// Then get paginated items
+		sqlQuery, args, err := utils.BuildPeonQuery(queryParams.Filter)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Invalid filter: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		sqlQuery += fmt.Sprintf(" ORDER BY %s %s", queryParams.Order.Field, queryParams.Order.Dir)
+		sqlQuery += " LIMIT ? OFFSET ?"
+		args = append(args, queryParams.PerPage, queryParams.Page*queryParams.PerPage)
+
+		rows, err := db.Query(sqlQuery, args...)
 		if err != nil {
 			slog.Error("Error querying peons", "err", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -857,19 +898,35 @@ func createGetAllPeonsHandler(db *sql.DB) http.HandlerFunc {
 
 		var peons []models.Peon
 		for rows.Next() {
-			var p models.Peon
-			err := rows.Scan(&p.ID, &p.Status, &p.LastHeartbeat, &p.CurrentTask, &p.Queues)
+			var peon models.Peon
+			err := rows.Scan(&peon.ID, &peon.Status, &peon.LastHeartbeat,
+				&peon.CurrentTask, &peon.Queues)
 			if err != nil {
 				slog.Error("Error scanning peon", "err", err)
 				continue
 			}
-			peons = append(peons, p)
+			peons = append(peons, peon)
+		}
+
+		if peons == nil {
+			peons = []models.Peon{}
+		}
+
+		// Calculate total pages
+		totalPages := (totalItems + queryParams.PerPage - 1) / queryParams.PerPage
+
+		response := models.PaginatedResponse{
+			Page:       queryParams.Page,
+			PerPage:    queryParams.PerPage,
+			TotalItems: totalItems,
+			TotalPages: totalPages,
+			Items:      peons,
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		err = json.NewEncoder(w).Encode(peons)
+		err = json.NewEncoder(w).Encode(response)
 		if err != nil {
-			slog.Error("Error encoding peons", "err", err)
+			slog.Error("Error encoding response", "err", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 		}
 	}
@@ -1047,45 +1104,40 @@ func createCancelTaskHandler(cr *ConnectionRegistry) http.HandlerFunc {
 func createGetTasksHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		slog.Info("GET /api/tasks")
-
-		// Get query parameters
-		query := r.URL.Query()
-
-		// Parse count parameter, default to 0
-		count := 0
-		if countStr := query.Get("count"); countStr != "" {
-			var err error
-			count, err = strconv.Atoi(countStr)
-			if err != nil {
-				slog.Error("Invalid count parameter", "err", err)
-				http.Error(w, "Invalid count parameter", http.StatusBadRequest)
-				return
-			}
+		queryParams, err := utils.ParseTaskQuery(r.URL.Query().Get("query"))
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Invalid query: %v", err), http.StatusBadRequest)
+			return
 		}
 
-		// Get order parameter
-		order := query.Get("order")
-
-		// Build SQL query
-		sqlQuery := "SELECT * FROM bountyboard"
-		if order != "" {
-			// Validate order parameter to prevent SQL injection
-			order = strings.ToUpper(order)
-			if order != "ASC" && order != "DESC" {
-				http.Error(w, "Invalid order parameter. Must be 'asc' or 'desc'", http.StatusBadRequest)
-				return
-			}
-			sqlQuery += " ORDER BY created_at " + order
-		} else {
-			sqlQuery += " ORDER BY created_at DESC"
+		// First, get total count
+		countQuery, countArgs, err := utils.BuildTaskQuery(queryParams.Filter)
+		countQuery = strings.Replace(countQuery, "SELECT *", "SELECT COUNT(*)", 1)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Invalid filter: %v", err), http.StatusBadRequest)
+			return
 		}
 
-		if count > 0 {
-			sqlQuery += " LIMIT " + strconv.Itoa(count)
+		var totalItems int
+		err = db.QueryRow(countQuery, countArgs...).Scan(&totalItems)
+		if err != nil {
+			slog.Error("Error counting tasks", "err", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
 		}
 
-		// Execute query and process results
-		rows, err := db.Query(sqlQuery)
+		// Then get paginated items
+		sqlQuery, args, err := utils.BuildTaskQuery(queryParams.Filter)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Invalid filter: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		sqlQuery += fmt.Sprintf(" ORDER BY %s %s", queryParams.Order.Field, queryParams.Order.Dir)
+		sqlQuery += " LIMIT ? OFFSET ?"
+		args = append(args, queryParams.PerPage, queryParams.Page*queryParams.PerPage)
+
+		rows, err := db.Query(sqlQuery, args...)
 		if err != nil {
 			slog.Error("Error querying tasks", "err", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -1104,24 +1156,33 @@ func createGetTasksHandler(db *sql.DB) http.HandlerFunc {
 				slog.Error("Error scanning task", "err", err)
 				continue
 			}
-
 			err = json.Unmarshal([]byte(payloadJSON), &task.Payload)
 			if err != nil {
 				slog.Error("Error parsing payload", "err", err)
 				continue
 			}
-
 			tasks = append(tasks, task)
 		}
 
-		if len(tasks) == 0 {
+		if tasks == nil {
 			tasks = []models.Task{}
 		}
 
+		// Calculate total pages
+		totalPages := (totalItems + queryParams.PerPage - 1) / queryParams.PerPage
+
+		response := models.PaginatedResponse{
+			Page:       queryParams.Page,
+			PerPage:    queryParams.PerPage,
+			TotalItems: totalItems,
+			TotalPages: totalPages,
+			Items:      tasks,
+		}
+
 		w.Header().Set("Content-Type", "application/json")
-		err = json.NewEncoder(w).Encode(tasks)
+		err = json.NewEncoder(w).Encode(response)
 		if err != nil {
-			slog.Error("Error encoding tasks", "err", err)
+			slog.Error("Error encoding response", "err", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 		}
 	}
@@ -1458,17 +1519,19 @@ func main() {
 		}
 	})
 	http.HandleFunc("GET /task/{id}", authMiddleware(createTaskViewHandler(db)))
-	http.HandleFunc("GET /peon/{id}/", authMiddleware(createPeonView))
+	http.HandleFunc("GET /peon/{id}/", authMiddleware(peonView))
+	http.HandleFunc("GET /peons/", authMiddleware(peonsView))
+	http.HandleFunc("GET /tasks/", authMiddleware(taskView))
 
-	http.HandleFunc("GET /api/peon", authMiddleware(createGetAllPeonsHandler(db)))
+	http.HandleFunc("GET /api/peons", authMiddleware(createGetPeonsHandler(db)))
 	http.HandleFunc("GET /api/peon/{id}", authMiddleware(createGetPeonHandler(db)))
 	http.HandleFunc("GET /api/peon/{id}/tasks", authMiddleware(createGetPeonTaskHandler(db)))
 	http.HandleFunc("POST /api/peon/{id}/update", authMiddleware(createUpdatePeonHandler(db)))
 	http.HandleFunc("POST /api/peon/{id}/statistics", authMiddleware(createPostStatisticsHandler(db)))
 
 	http.HandleFunc("POST /api/task", authMiddleware(createPostTaskHandler(db)))
-	http.HandleFunc("GET /api/task/{id}", authMiddleware(createGetTaskHandler(db)))
 	http.HandleFunc("GET /api/tasks", authMiddleware(createGetTasksHandler(db)))
+	http.HandleFunc("GET /api/task/{id}", authMiddleware(createGetTaskHandler(db)))
 	http.HandleFunc("POST /api/task/{id}/cancel", authMiddleware(createCancelTaskHandler(registry)))
 	http.HandleFunc("POST /api/task/{id}/update", authMiddleware(createTaskUpdateHandler(db)))
 	http.HandleFunc("POST /api/task/{id}/acknowledgement", authMiddleware(createPostTaskAcknowledgementHandler(db)))

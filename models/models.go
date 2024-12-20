@@ -67,3 +67,67 @@ type Peon struct {
 	CurrentTask   *string `json:"current_task"`
 	Queues        *string `json:"queues"`
 }
+
+type FilterOperator string
+
+const (
+	FilterOpEquals    FilterOperator = "eq"
+	FilterOpGreater   FilterOperator = "gt"
+	FilterOpLess      FilterOperator = "lt"
+	FilterOpGreaterEq FilterOperator = "gte"
+	FilterOpLessEq    FilterOperator = "lte"
+	FilterOpIn        FilterOperator = "in"
+	FilterOpNotIn     FilterOperator = "not_in"
+)
+
+type FilterCondition struct {
+	Op    FilterOperator `json:"op"`
+	Value interface{}    `json:"value"`
+}
+
+type QueryParams struct {
+	Page    int         `json:"page"`
+	PerPage int         `json:"per_page"`
+	Order   *OrderParam `json:"order,omitempty"`
+	Filter  any         `json:"filter,omitempty"` // will be TaskFilter or PeonFilter
+}
+
+type OrderParam struct {
+	Field string `json:"field"` // e.g., "created_at", "last_heartbeat"
+	Dir   string `json:"dir"`   // "ASC" or "DESC"
+}
+
+// For Tasks
+type TaskQuery struct {
+	QueryParams
+	Filter *TaskFilter `json:"filter,omitempty"`
+}
+
+// For Peons
+type PeonQuery struct {
+	QueryParams
+	Filter *PeonFilter `json:"filter,omitempty"`
+}
+
+type TaskFilter struct {
+	Status    *FilterCondition `json:"status,omitempty"`
+	CreatedAt *FilterCondition `json:"created_at,omitempty"`
+	TaskName  *FilterCondition `json:"task_name,omitempty"`
+	Queue     *FilterCondition `json:"queue,omitempty"`
+	PeonId    *FilterCondition `json:"peon_id,omitempty"`
+}
+
+type PeonFilter struct {
+	Status        *FilterCondition `json:"status,omitempty"`
+	LastHeartbeat *FilterCondition `json:"last_heartbeat,omitempty"`
+	CurrentTask   *FilterCondition `json:"current_task,omitempty"`
+	Queues        *FilterCondition `json:"queues,omitempty"`
+}
+
+type PaginatedResponse struct {
+	Page       int         `json:"page"`
+	PerPage    int         `json:"per_page"`
+	TotalItems int         `json:"total_items"`
+	TotalPages int         `json:"total_pages"`
+	Items      interface{} `json:"items"`
+}
