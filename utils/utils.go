@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Artur-Galstyan/workcraft-stronghold/models"
+	"github.com/gorilla/websocket"
 )
 
 // Helper function to parse the filter JSON
@@ -340,4 +341,17 @@ func ParsePeonQuery(queryJSON string) (*models.PeonQuery, error) {
 	}
 
 	return &query, nil
+}
+
+func NotifyChieftain(chieftainConn *websocket.Conn, message string) error {
+	if chieftainConn == nil {
+		return nil
+	}
+
+	err := chieftainConn.WriteMessage(websocket.TextMessage, []byte(message))
+	if err != nil {
+		return fmt.Errorf("failed to notify chieftain: %w", err)
+	}
+
+	return nil
 }

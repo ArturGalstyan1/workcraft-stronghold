@@ -490,11 +490,14 @@ var upgrader = websocket.Upgrader{
 
 var chieftainUpgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
-		token, err := r.Cookie("workcraft_auth")
-		if err != nil {
-			slog.Error("No JWT provided")
+		jwtToken := r.Header.Get("Sec-Websocket-Protocol")
+		slog.Info("JWT Token: ", "jet", jwtToken)
+		// If not in query params, try cookie as before
+		if jwtToken == "" {
+			if cookie, err := r.Cookie("workcraft_auth"); err == nil {
+				jwtToken = cookie.Value
+			}
 		}
-		jwtToken := token.Value
 
 		if jwtToken == "" {
 			slog.Error("No JWT provided")
@@ -767,14 +770,14 @@ func createTaskUpdateHandler(db *sql.DB) http.HandlerFunc {
 			err = json.Unmarshal([]byte(payloadJSON), &updatedTask.Payload)
 			if err != nil {
 				slog.Error("Error parsing payload", "err", err)
-			} else if chieftainConn != nil {
+			} else {
 				taskJSON, err := json.Marshal(updatedTask)
 				if err != nil {
 					slog.Error("Failed to serialize updated task", "err", err)
 				} else {
 					message := fmt.Sprintf(`{"type": "task_update", "message": {"task": %s}}`,
 						string(taskJSON))
-					err := chieftainConn.WriteMessage(websocket.TextMessage, []byte(message))
+					err := utils.NotifyChieftain(chieftainConn, message)
 					if err != nil {
 						slog.Error("Failed to send task update to chieftain", "err", err)
 					}
@@ -850,6 +853,11 @@ func createPostStatisticsHandler(db *sql.DB) http.HandlerFunc {
 		w.WriteHeader(http.StatusCreated)
 		w.Write([]byte("Statistics added"))
 	}
+}
+
+func testHandler(w http.ResponseWriter, r *http.Request) {
+	slog.Info("GET /test")
+	w.Write([]byte("Success!"))
 }
 
 func createGetPeonsHandler(db *sql.DB) http.HandlerFunc {
@@ -1023,21 +1031,18 @@ func createUpdatePeonHandler(db *sql.DB) http.HandlerFunc {
 			updatedPeon.Queues = queues
 		}
 
-		// If chieftain connection exists, send the update
-		if chieftainConn != nil {
-			peonJSON, err := json.Marshal(updatedPeon)
+		peonJSON, err := json.Marshal(updatedPeon)
+		if err != nil {
+			slog.Error("Failed to serialize updated peon", "err", err)
+		} else {
+			message := fmt.Sprintf(`{"type": "peon_update", "message": {"peon": %s}}`,
+				string(peonJSON))
+			err := utils.NotifyChieftain(chieftainConn, message)
 			if err != nil {
-				slog.Error("Failed to serialize updated peon", "err", err)
-			} else {
-				message := fmt.Sprintf(`{"type": "peon_update", "message": {"peon": %s}}`,
-					string(peonJSON))
-
-				err := chieftainConn.WriteMessage(websocket.TextMessage, []byte(message))
-				if err != nil {
-					slog.Error("Failed to send peon update to chieftain", "err", err)
-				}
+				slog.Error("Failed to send peon update to chieftain", "err", err)
 			}
 		}
+
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
@@ -1490,7 +1495,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	defer db.Close() // Now this will close when the program ends
+	defer db.Close()
 
 	setupDatabase(db)
 	setupCronJobs(db)
@@ -1512,7 +1517,6 @@ func main() {
 			component := view.Login()
 			templ.Handler(component).ServeHTTP(w, r)
 		case http.MethodPost:
-
 			loginHandler(w, r)
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1535,6 +1539,8 @@ func main() {
 	http.HandleFunc("POST /api/task/{id}/cancel", authMiddleware(createCancelTaskHandler(registry)))
 	http.HandleFunc("POST /api/task/{id}/update", authMiddleware(createTaskUpdateHandler(db)))
 	http.HandleFunc("POST /api/task/{id}/acknowledgement", authMiddleware(createPostTaskAcknowledgementHandler(db)))
+
+	http.HandleFunc("GET /api/test", authMiddleware(testHandler))
 
 	slog.Info("Building Stronghold on port 6112")
 	http.ListenAndServe(":6112", nil)
