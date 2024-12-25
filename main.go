@@ -32,13 +32,18 @@ var (
 	registry      *ConnectionRegistry
 	taskProcessor *TaskProcessor
 	db            *sql.DB
-	chieftainConn *websocket.Conn
+	chieftain     *ChieftainConnection
 )
 
 const (
 	TokenExpiration        = time.Hour * 24 // 24 hours
 	HeartbeatClearInterval = time.Second * 30
 )
+
+type ChieftainConnection struct {
+	conn *websocket.Conn
+	mu   sync.Mutex
+}
 
 type ConnectionRegistry struct {
 	connections map[string]*websocket.Conn
@@ -52,6 +57,32 @@ type TaskProcessor struct {
 	taskQueue chan models.Task
 	mu        sync.RWMutex
 	running   bool
+}
+
+func NewChieftainConnection() *ChieftainConnection {
+	return &ChieftainConnection{}
+}
+
+func (c *ChieftainConnection) SetConnection(conn *websocket.Conn) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.conn = conn
+}
+
+func (c *ChieftainConnection) SendMessage(message string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.conn == nil {
+		return fmt.Errorf("no chieftain connection")
+	}
+	return c.conn.WriteMessage(websocket.TextMessage, []byte(message))
+}
+
+func notifyChieftain(chieftain *ChieftainConnection, message string) error {
+	if chieftain == nil {
+		return fmt.Errorf("chieftain connection not initialized")
+	}
+	return chieftain.SendMessage(message)
 }
 
 func NewConnectionRegistry(db *sql.DB) *ConnectionRegistry {
@@ -127,34 +158,14 @@ func (tp *TaskProcessor) processQueue() {
 		}
 
 		var peonId string
-		// Try to find an IDLE peon that handles this queue
-		err = tp.db.QueryRow(`
-            SELECT id FROM peon
-            WHERE status = 'IDLE'
-            AND (
-          		queues LIKE '[%''' || ? || '''%]'
-                OR queues IS NULL  -- matches SQL NULL
-            )
-            ORDER BY last_heartbeat ASC
-            LIMIT 1
-        `, task.Queue).Scan(&peonId)
+		err = tp.db.QueryRow(utils.GetIdlePeons(), task.Queue).Scan(&peonId)
 
 		if err == sql.ErrNoRows {
-			// If no IDLE peon, try to find any active peon that handles this queue
-			err = tp.db.QueryRow(`
-                SELECT id FROM peon
-                WHERE status != 'OFFLINE'
-                AND (
-                		queues LIKE '[%''' || ? || '''%]'
-                        OR queues IS NULL  -- matches SQL NULL
-                )
-                ORDER BY last_heartbeat ASC
-                LIMIT 1
-            `, task.Queue).Scan(&peonId)
+			err = tp.db.QueryRow(utils.GetAnyOnlinePeon(), task.Queue).Scan(&peonId)
 
 			if err != nil {
 				slog.Error("Failed to find any available peon", "err", err)
-				continue // Skip this task if no peon is available
+				continue
 			}
 		} else if err != nil {
 			slog.Error("Error querying for idle peon", "err", err)
@@ -162,7 +173,6 @@ func (tp *TaskProcessor) processQueue() {
 		}
 
 		slog.Info("Sending task to peon", "taskID", task.ID, "peonId", peonId)
-		// Send task to peon
 		err = tp.registry.SendMessage(peonId, messageBytes)
 		if err != nil {
 			slog.Error("Failed to send task to peon", "err", err)
@@ -186,16 +196,7 @@ func (tp *TaskProcessor) scanForPendingTasks() {
 
 		select {
 		case <-ticker.C:
-			rows, err := tp.db.Query(`
-				SELECT id, task_name, queue, payload, retry_count, retry_limit, retry_on_failure
-				FROM bountyboard
-				WHERE status = 'PENDING'
-				   OR (status = 'FAILURE'
-				       AND retry_on_failure = TRUE
-				       AND retry_count < retry_limit
-				       AND updated_at < datetime('now', '-1 minutes'))
-				ORDER BY created_at ASC
-				LIMIT 10`)
+			rows, err := tp.db.Query(utils.GetPendingTasks())
 			if err != nil {
 				slog.Error("Error querying pending tasks", "err", err)
 				continue
@@ -277,7 +278,7 @@ func init() {
 }
 
 func markPeonOffline(db *sql.DB, peonID string) {
-	_, err := db.Exec("UPDATE peon SET status = 'OFFLINE' WHERE id = ?", peonID)
+	_, err := db.Exec(utils.MarkPeonAsOffline(), peonID)
 	if err != nil {
 		slog.Error("Failed to mark peon offline", "err", err)
 	}
@@ -388,9 +389,7 @@ func setupCronJobs(db *sql.DB) {
 	c.AddFunc("* * * * *", func() {
 		cronMutex.Lock()
 		defer cronMutex.Unlock()
-		query := `UPDATE peon SET status = 'OFFLINE', current_task = NULL WHERE last_heartbeat < datetime('now', '-1 minutes')`
-
-		_, err := db.Exec(query)
+		_, err := db.Exec(utils.CleanPeons())
 		if err != nil {
 			slog.Error("Failed to clean up dead peons", "err", err)
 			return
@@ -409,31 +408,7 @@ func setupCronJobs(db *sql.DB) {
 		}
 
 		defer tx.Rollback()
-
-		query := `
-    UPDATE bountyboard
-    SET status = 'PENDING',
-        peon_id = NULL
-    WHERE status = 'RUNNING'
-    AND peon_id IS NOT NULL
-    AND (
-        -- Either peon is offline
-        NOT EXISTS (
-            SELECT 1 FROM peon
-            WHERE peon.id = bountyboard.peon_id
-            AND peon.status != 'OFFLINE'
-        )
-        OR
-        -- Or peon is online but working on something else
-        EXISTS (
-            SELECT 1 FROM peon
-            WHERE peon.id = bountyboard.peon_id
-            AND peon.status != 'OFFLINE'
-            AND peon.current_task != bountyboard.id
-        )
-    )`
-
-		rows, err := tx.Query(query)
+		rows, err := tx.Query(utils.CleanBountyboard())
 		if err == sql.ErrNoRows {
 			return
 		}
@@ -448,7 +423,6 @@ func setupCronJobs(db *sql.DB) {
 			if err != nil {
 				slog.Error("Failed to extract ID into string", "err", err)
 			}
-
 			updateQuery := `UPDATE bountyboard SET status = 'PENDING', peon_id = NULL WHERE id = ?`
 			_, err = tx.Exec(updateQuery, taskID)
 			if err != nil {
@@ -777,7 +751,7 @@ func createTaskUpdateHandler(db *sql.DB) http.HandlerFunc {
 				} else {
 					message := fmt.Sprintf(`{"type": "task_update", "message": {"task": %s}}`,
 						string(taskJSON))
-					err := utils.NotifyChieftain(chieftainConn, message)
+					err := notifyChieftain(chieftain, message)
 					if err != nil {
 						slog.Error("Failed to send task update to chieftain", "err", err)
 					}
@@ -942,7 +916,7 @@ func createGetPeonsHandler(db *sql.DB) http.HandlerFunc {
 
 func createUpdatePeonHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		slog.Info("POST /api/peon/{id}/update")
+		// slog.Info("POST /api/peon/{id}/update")
 		var update struct {
 			Status        *string `json:"status,omitempty"`
 			LastHeartbeat *string `json:"last_heartbeat,omitempty"`
@@ -957,7 +931,6 @@ func createUpdatePeonHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		// Build dynamic query
 		query := "UPDATE peon SET"
 		var args []interface{}
 		var setClauses []string
@@ -970,7 +943,7 @@ func createUpdatePeonHandler(db *sql.DB) http.HandlerFunc {
 			setClauses = append(setClauses, "last_heartbeat = ?")
 			args = append(args, *update.LastHeartbeat)
 		}
-		// Always include CurrentTask in update, even if nil
+
 		setClauses = append(setClauses, "current_task = ?")
 		if update.CurrentTask != nil {
 			args = append(args, *update.CurrentTask)
@@ -993,7 +966,6 @@ func createUpdatePeonHandler(db *sql.DB) http.HandlerFunc {
 		peonID := r.PathValue("id")
 		args = append(args, peonID)
 
-		// Execute the update
 		_, err = db.Exec(query, args...)
 		if err != nil {
 			slog.Error("Failed to update peon", "err", err)
@@ -1037,7 +1009,7 @@ func createUpdatePeonHandler(db *sql.DB) http.HandlerFunc {
 		} else {
 			message := fmt.Sprintf(`{"type": "peon_update", "message": {"peon": %s}}`,
 				string(peonJSON))
-			err := utils.NotifyChieftain(chieftainConn, message)
+			err := notifyChieftain(chieftain, message)
 			if err != nil {
 				slog.Error("Failed to send peon update to chieftain", "err", err)
 			}
@@ -1173,7 +1145,6 @@ func createGetTasksHandler(db *sql.DB) http.HandlerFunc {
 			tasks = []models.Task{}
 		}
 
-		// Calculate total pages
 		totalPages := (totalItems + queryParams.PerPage - 1) / queryParams.PerPage
 
 		response := models.PaginatedResponse{
@@ -1263,8 +1234,7 @@ func createPostTaskHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		query := `INSERT INTO bountyboard (id, status, task_name, queue, payload, retry_on_failure, retry_limit) VALUES (?, ?, ?, ?, ?, ?, ?)`
-		_, err = db.Exec(query, task.ID, task.Status, task.TaskName, task.Queue, payloadJSON, task.RetryOnFailure, task.RetryLimit)
+		_, err = db.Exec(utils.InsertIntoBountyboard(), task.ID, task.Status, task.TaskName, task.Queue, payloadJSON, task.RetryOnFailure, task.RetryLimit)
 		if err != nil {
 			slog.Error("Failed to insert task into database", "err", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -1289,8 +1259,7 @@ func insertPeonIntoDb(db *sql.DB, peonId string, peonQueues string) {
 		queues = peonQueues
 	}
 
-	query := `INSERT INTO peon (id, queues) VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET status = 'IDLE'`
-	_, err := db.Exec(query, peonId, queues)
+	_, err := db.Exec(utils.InsertPeon(), peonId, queues)
 	if err != nil {
 		slog.Error("Error inserting peon into db", "err", err)
 	}
@@ -1310,7 +1279,7 @@ func chieftainWsHandler(w http.ResponseWriter, r *http.Request) {
 		slog.Info("upgrade failed: ", "err", err)
 		return
 	}
-	chieftainConn = conn
+	chieftain.SetConnection(conn)
 	defer func() {
 		slog.Info("Chieftain disconnected")
 		conn.Close()
@@ -1346,7 +1315,7 @@ func createWsHandler(db *sql.DB) http.HandlerFunc {
 			slog.Info("Peon disconnected", "id", peonId)
 			registry.Remove(peonId)
 
-			_, err := db.Exec("UPDATE peon SET status = 'OFFLINE' WHERE id = ?", peonId)
+			_, err := db.Exec(utils.MarkPeonAsOffline(), peonId)
 			if err != nil {
 				slog.Error("Failed to update peon status to offline", "err", err)
 			}
@@ -1408,71 +1377,11 @@ func createWsHandler(db *sql.DB) http.HandlerFunc {
 
 func setupDatabase(db *sql.DB) {
 	queries := []string{
-		`CREATE TABLE IF NOT EXISTS peon (
-			id VARCHAR(36) PRIMARY KEY,
-			status TEXT DEFAULT 'IDLE' CHECK (status IN ('IDLE', 'PREPARING', 'WORKING', 'OFFLINE')),
-			last_heartbeat TIMESTAMP DEFAULT (datetime ('now')),
-			current_task CHAR(36),
-			queues TEXT
-		);`,
-		`CREATE TRIGGER IF NOT EXISTS peon_last_heartbeat_update AFTER
-		UPDATE ON peon WHEN NEW.status != OLD.status BEGIN
-		UPDATE peon
-		SET last_heartbeat = datetime ('now')
-		WHERE id = NEW.id;
-		END;`,
-		`CREATE TABLE IF NOT EXISTS bountyboard (
-		    id CHAR(36) PRIMARY KEY,
-		    status TEXT NOT NULL DEFAULT 'PENDING' CHECK (
-		        status IN (
-		            'PENDING',
-		            'RUNNING',
-		            'SUCCESS',
-		            'FAILURE',
-		            'INVALID',
-	                'CANCELLED'
-		        )
-		    ),
-		    created_at TIMESTAMP DEFAULT (datetime ('now')),
-		    updated_at TIMESTAMP DEFAULT (datetime ('now')),
-		    task_name VARCHAR(255) NOT NULL,
-		    peon_id VARCHAR(36),
-		    queue VARCHAR(255) DEFAULT 'DEFAULT',
-		    payload TEXT,
-		    result TEXT,
-		    retry_on_failure BOOLEAN DEFAULT FALSE,
-		    retry_count INTEGER DEFAULT 0,
-		    retry_limit INTEGER NOT NULL DEFAULT 0,
-		    CONSTRAINT chk_retry_limit CHECK (retry_limit >= 0),
-		    CONSTRAINT chk_retry_consistency CHECK (
-		        (retry_on_failure = 0)
-		        OR (
-		            retry_on_failure = 1
-		            AND retry_limit > 1
-		        )
-		    ),
-		    FOREIGN KEY (peon_id) REFERENCES peon (id)
-		)`,
-		`CREATE TRIGGER IF NOT EXISTS bountyboard_updated_at AFTER
-		UPDATE ON bountyboard BEGIN
-		UPDATE bountyboard
-		SET
-		    updated_at = datetime ('now')
-		WHERE
-		    id = NEW.id;
-		END`,
-		`
-		CREATE TABLE IF NOT EXISTS stats (
-			id INTEGER PRIMARY KEY,
-			type TEXT NOT NULL,
-			value TEXT NOT NULL,
-			task_id CHAR(36),
-			peon_id CHAR(36),
-			created_at TIMESTAMP DEFAULT (datetime ('now')),
-			FOREIGN KEY (task_id) REFERENCES bountyboard (id),
-			FOREIGN KEY (peon_id) REFERENCES peon (id)
-		);
-		`,
+		utils.CreatePeonTable(),
+		utils.CreatePeonTrigger(),
+		utils.CreateBountyboardTable(),
+		utils.CreateBountyboardTrigger(),
+		utils.CreateStatsTable(),
 	}
 
 	for _, q := range queries {
@@ -1502,6 +1411,8 @@ func main() {
 
 	registry = NewConnectionRegistry(db)
 	taskProcessor = NewTaskProcessor(db, registry)
+	chieftain = NewChieftainConnection()
+
 	taskProcessor.Start()
 	fs := http.FileServer(http.Dir("static"))
 	http.Handle("/static/", http.StripPrefix("/static/", fs))
