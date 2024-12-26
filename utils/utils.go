@@ -1,6 +1,8 @@
 package utils
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -340,4 +342,13 @@ func ParsePeonQuery(queryJSON string) (*models.PeonQuery, error) {
 	}
 
 	return &query, nil
+}
+
+func GenerateUUID() string {
+    b := make([]byte, 16)
+    _, err := rand.Read(b)
+    if err != nil {
+        return ""
+    }
+    return hex.EncodeToString(b)
 }

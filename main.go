@@ -20,246 +20,85 @@ import (
 	"github.com/Artur-Galstyan/workcraft-stronghold/view"
 	"github.com/a-h/templ"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/gorilla/websocket"
 	"github.com/joho/godotenv"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/robfig/cron/v3"
 )
 
-// Variables
-var (
-	hashedApiKey  string
-	registry      *ConnectionRegistry
-	taskProcessor *TaskProcessor
-	db            *sql.DB
-	chieftain     *ChieftainConnection
-)
-
+// Constants
 const (
 	TokenExpiration        = time.Hour * 24 // 24 hours
 	HeartbeatClearInterval = time.Second * 30
 )
 
-type ChieftainConnection struct {
-	conn *websocket.Conn
-	mu   sync.Mutex
-}
+// Variables
+var (
+	hashedApiKey string
+	db           *sql.DB
+)
 
-type ConnectionRegistry struct {
-	connections map[string]*websocket.Conn
+type EventSender struct {
+	connections map[string]http.ResponseWriter
+	controllers map[string]http.ResponseController
 	mu          sync.RWMutex
-	db          *sql.DB
 }
 
-type TaskProcessor struct {
-	db        *sql.DB
-	registry  *ConnectionRegistry
-	taskQueue chan models.Task
-	mu        sync.RWMutex
-	running   bool
-}
-
-func NewChieftainConnection() *ChieftainConnection {
-	return &ChieftainConnection{}
-}
-
-func (c *ChieftainConnection) SetConnection(conn *websocket.Conn) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.conn = conn
-}
-
-func (c *ChieftainConnection) SendMessage(message string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.conn == nil {
-		return fmt.Errorf("no chieftain connection")
-	}
-	return c.conn.WriteMessage(websocket.TextMessage, []byte(message))
-}
-
-func notifyChieftain(chieftain *ChieftainConnection, message string) error {
-	if chieftain == nil {
-		return fmt.Errorf("chieftain connection not initialized")
-	}
-	return chieftain.SendMessage(message)
-}
-
-func NewConnectionRegistry(db *sql.DB) *ConnectionRegistry {
-	return &ConnectionRegistry{
-		connections: make(map[string]*websocket.Conn), db: db,
+func NewEventSender() *EventSender {
+	return &EventSender{
+		connections: make(map[string]http.ResponseWriter),
+		controllers: make(map[string]http.ResponseController),
 	}
 }
 
-func NewTaskProcessor(db *sql.DB, registry *ConnectionRegistry) *TaskProcessor {
-	return &TaskProcessor{
-		db:        db,
-		registry:  registry,
-		taskQueue: make(chan models.Task, 100),
-		running:   false,
-	}
+func (s *EventSender) Register(ID string, w http.ResponseWriter, rc http.ResponseController) {
+	slog.Info("Registering", "ID", ID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.connections[ID] = w
+	s.controllers[ID] = rc
 }
 
-func (tp *TaskProcessor) Start() {
-	tp.mu.Lock()
-	if tp.running {
-		tp.mu.Unlock()
-		return
-	}
-	tp.running = true
-	tp.mu.Unlock()
-
-	// Start the task scanner
-	go tp.scanForPendingTasks()
-
-	// Start the task processor
-	go tp.processQueue()
-
+func (s *EventSender) Unregister(ID string) {
+	slog.Info("Unregistering", "ID", ID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.connections, ID)
+	delete(s.controllers, ID)
 }
 
-func (tp *TaskProcessor) Stop() {
-	tp.mu.Lock()
-	tp.running = false
-	tp.mu.Unlock()
-}
+func (s *EventSender) SendEvent(ID string, msg string) error {
+	s.mu.RLock()
+	w, exists := s.connections[ID]
+	rc, _ := s.controllers[ID]
+	s.mu.RUnlock()
 
-func (tp *TaskProcessor) processQueue() {
-	for task := range tp.taskQueue {
-		// sleep for a second
-		// time.Sleep(1 * time.Second)
-		var count int
-		row := tp.db.QueryRow("SELECT COUNT(*) FROM peon WHERE status != 'OFFLINE'")
-		err := row.Scan(&count)
-		if err != nil {
-			slog.Error("Failed to get peon count", "err", err)
-			continue
-		}
-		if count == 0 {
-			slog.Info("No peons available")
-			continue
-		}
-
-		message := models.WebSocketMessage{
-			Type: "new_task",
-			Message: &map[string]interface{}{
-				"id":               task.ID,
-				"task_name":        task.TaskName,
-				"payload":          task.Payload,
-				"retry_on_failure": task.RetryOnFailure,
-				"retry_limit":      task.RetryLimit,
-				"retry_count":      task.RetryCount,
-			},
-		}
-
-		messageBytes, err := json.Marshal(message)
-		if err != nil {
-			slog.Error("Failed to marshal task notification", "err", err)
-			continue
-		}
-
-		var peonId string
-		err = tp.db.QueryRow(utils.GetIdlePeons(), task.Queue).Scan(&peonId)
-
-		if err == sql.ErrNoRows {
-			err = tp.db.QueryRow(utils.GetAnyOnlinePeon(), task.Queue).Scan(&peonId)
-
-			if err != nil {
-				slog.Error("Failed to find any available peon", "err", err)
-				continue
-			}
-		} else if err != nil {
-			slog.Error("Error querying for idle peon", "err", err)
-			continue
-		}
-
-		slog.Info("Sending task to peon", "taskID", task.ID, "peonId", peonId)
-		err = tp.registry.SendMessage(peonId, messageBytes)
-		if err != nil {
-			slog.Error("Failed to send task to peon", "err", err)
-			continue
-		}
-
-	}
-}
-
-func (tp *TaskProcessor) scanForPendingTasks() {
-	ticker := time.NewTicker(1000 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		tp.mu.RLock()
-		if !tp.running {
-			tp.mu.RUnlock()
-			return
-		}
-		tp.mu.RUnlock()
-
-		select {
-		case <-ticker.C:
-			rows, err := tp.db.Query(utils.GetPendingTasks())
-			if err != nil {
-				slog.Error("Error querying pending tasks", "err", err)
-				continue
-			}
-
-			for rows.Next() {
-				var task models.Task
-				var payloadJSON string
-				err := rows.Scan(&task.ID, &task.TaskName, &task.Queue, &payloadJSON, &task.RetryCount, &task.RetryLimit, &task.RetryOnFailure)
-				if err != nil {
-					slog.Error("Error scanning task", "err", err)
-					continue
-				}
-
-				// Parse the payload
-				err = json.Unmarshal([]byte(payloadJSON), &task.Payload)
-				if err != nil {
-					slog.Error("Error parsing payload", "err", err)
-					continue
-				}
-
-				slog.Info("Adding task to queue", "taskID", task.ID, "taskName", task.TaskName, "retryCount", task.RetryCount, "retryLimit", task.RetryLimit)
-				tp.AddTask(task)
-			}
-			rows.Close()
-		}
-	}
-}
-
-func (tp *TaskProcessor) AddTask(task models.Task) {
-	tp.taskQueue <- task
-}
-
-func (cr *ConnectionRegistry) Add(peonID string, conn *websocket.Conn) {
-	cr.mu.Lock()
-	defer cr.mu.Unlock()
-	cr.connections[peonID] = conn
-}
-
-func (cr *ConnectionRegistry) Remove(peonID string) {
-	cr.mu.Lock()
-	defer cr.mu.Unlock()
-	delete(cr.connections, peonID)
-}
-
-func (cr *ConnectionRegistry) GetConnection(peonID string) (*websocket.Conn, bool) {
-	cr.mu.RLock()
-	defer cr.mu.RUnlock()
-	conn, exists := cr.connections[peonID]
-	return conn, exists
-}
-
-func (cr *ConnectionRegistry) SendMessage(peonID string, message []byte) error {
-	cr.mu.RLock()
-	defer cr.mu.RUnlock()
-
-	conn, exists := cr.connections[peonID]
 	if !exists {
-		markPeonOffline(db, peonID)
-		return fmt.Errorf("no connection found for peon: %s", peonID)
+		return fmt.Errorf("no connection found for ID: %s", ID)
 	}
 
-	return conn.WriteMessage(websocket.TextMessage, message)
+	_, err := fmt.Fprintf(w, "data: %s\n\n", msg)
+	if err != nil {
+		return err
+	}
+	return rc.Flush()
+}
+
+func (s *EventSender) BroadcastToChieftains(msg string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for id := range s.connections {
+		if strings.HasPrefix(id, "chieftain-") {
+			w := s.connections[id]
+			rc := s.controllers[id]
+			_, err := fmt.Fprintf(w, "data: %s\n\n", msg)
+			if err != nil {
+				slog.Error("Failed to write to writer", "err", err)
+				continue
+			}
+			rc.Flush()
+		}
+	}
 }
 
 func init() {
@@ -277,11 +116,9 @@ func init() {
 	hashedApiKey = hex.EncodeToString(hasher.Sum(nil))
 }
 
-func markPeonOffline(db *sql.DB, peonID string) {
+func markPeonOffline(db *sql.DB, peonID string) error {
 	_, err := db.Exec(utils.MarkPeonAsOffline(), peonID)
-	if err != nil {
-		slog.Error("Failed to mark peon offline", "err", err)
-	}
+	return err
 }
 
 func loginHandler(w http.ResponseWriter, r *http.Request) {
@@ -442,57 +279,6 @@ func setupCronJobs(db *sql.DB) {
 	})
 
 	c.Start()
-}
-
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		token := r.Header.Get("WORKCRAFT_API_KEY")
-		if token == "" {
-			slog.Error("No WORKCRAFT_API_KEY provided")
-			return false
-		}
-
-		// Use constant-time comparison to prevent timing attacks
-		if subtle.ConstantTimeCompare([]byte(token), []byte(hashedApiKey)) != 1 {
-			slog.Error("Invalid WORKCRAFT_API_KEY provided")
-			return false
-		}
-
-		return true
-	},
-}
-
-var chieftainUpgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		jwtToken := r.Header.Get("Sec-Websocket-Protocol")
-		slog.Info("JWT Token: ", "jet", jwtToken)
-		// If not in query params, try cookie as before
-		if jwtToken == "" {
-			if cookie, err := r.Cookie("workcraft_auth"); err == nil {
-				jwtToken = cookie.Value
-			}
-		}
-
-		if jwtToken == "" {
-			slog.Error("No JWT provided")
-			return false
-		}
-
-		claims := &models.Claims{}
-		t, err := jwt.ParseWithClaims(jwtToken, claims, func(token *jwt.Token) (interface{}, error) {
-			return []byte(os.Getenv("WORKCRAFT_API_KEY")), nil
-		})
-		if err != nil {
-			slog.Error("Invalid JWT", "err", err)
-			return false
-		}
-
-		if !t.Valid {
-			slog.Error("Invalid JWT")
-			return false
-		}
-		return true
-	},
 }
 
 func taskView(w http.ResponseWriter, r *http.Request) {
@@ -749,12 +535,9 @@ func createTaskUpdateHandler(db *sql.DB) http.HandlerFunc {
 				if err != nil {
 					slog.Error("Failed to serialize updated task", "err", err)
 				} else {
-					message := fmt.Sprintf(`{"type": "task_update", "message": {"task": %s}}`,
+					fmt.Sprintf(`{"type": "task_update", "message": {"task": %s}}`,
 						string(taskJSON))
-					err := notifyChieftain(chieftain, message)
-					if err != nil {
-						slog.Error("Failed to send task update to chieftain", "err", err)
-					}
+					// TODO: Notify Chieftain
 				}
 			}
 		}
@@ -829,9 +612,12 @@ func createPostStatisticsHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-func testHandler(w http.ResponseWriter, r *http.Request) {
-	slog.Info("GET /test")
-	w.Write([]byte("Success!"))
+func createTestHandler(eventSender *EventSender) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		slog.Info("GET /test")
+		eventSender.BroadcastToChieftains("HI")
+		w.Write([]byte("Success!"))
+	}
 }
 
 func createGetPeonsHandler(db *sql.DB) http.HandlerFunc {
@@ -1007,9 +793,9 @@ func createUpdatePeonHandler(db *sql.DB) http.HandlerFunc {
 		if err != nil {
 			slog.Error("Failed to serialize updated peon", "err", err)
 		} else {
-			message := fmt.Sprintf(`{"type": "peon_update", "message": {"peon": %s}}`,
+			fmt.Sprintf(`{"type": "peon_update", "message": {"peon": %s}}`,
 				string(peonJSON))
-			err := notifyChieftain(chieftain, message)
+			// TODO: Notify Chieftain
 			if err != nil {
 				slog.Error("Failed to send peon update to chieftain", "err", err)
 			}
@@ -1019,7 +805,7 @@ func createUpdatePeonHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-func createCancelTaskHandler(cr *ConnectionRegistry) http.HandlerFunc {
+func createCancelTaskHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		slog.Info("POST /api/task/{id}/cancel")
 		taskID := r.PathValue("id")
@@ -1033,7 +819,7 @@ func createCancelTaskHandler(cr *ConnectionRegistry) http.HandlerFunc {
 		slog.Info("Received cancel for task", "id", taskID)
 		var peonID string
 		var status string
-		err := cr.db.QueryRow("SELECT peon_id, status FROM bountyboard WHERE id = ?", taskID).Scan(&peonID, &status)
+		err := db.QueryRow("SELECT peon_id, status FROM bountyboard WHERE id = ?", taskID).Scan(&peonID, &status)
 		if err == sql.ErrNoRows {
 			http.Error(w, "Task not found", http.StatusNotFound)
 			return
@@ -1050,19 +836,20 @@ func createCancelTaskHandler(cr *ConnectionRegistry) http.HandlerFunc {
 			return
 		}
 
-		data := map[string]interface{}{
-			"type":    "cancel_task",
-			"message": taskID,
-		}
+		// data := map[string]interface{}{
+		// 	"type":    "cancel_task",
+		// 	"message": taskID,
+		// }
 
-		bytes, err := json.Marshal(data)
+		// bytes, err := json.Marshal(data)
+
 		if err != nil {
 			slog.Error("Failed to marshal cancel message", "err", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
 		}
 
-		err = cr.SendMessage(peonID, bytes)
+		// TODO: Send cancel SSE
 		if err != nil {
 			slog.Error("Failed to send cancel message", "err", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -1248,21 +1035,19 @@ func createPostTaskHandler(db *sql.DB) http.HandlerFunc {
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 		}
 
-		taskProcessor.AddTask(task)
+		// TODO: Add task
 
 	}
 }
 
-func insertPeonIntoDb(db *sql.DB, peonId string, peonQueues string) {
+func insertPeonIntoDb(db *sql.DB, peonID string, peonQueues string) error {
 	var queues interface{} = nil
 	if peonQueues != "NULL" {
 		queues = peonQueues
 	}
 
-	_, err := db.Exec(utils.InsertPeon(), peonId, queues)
-	if err != nil {
-		slog.Error("Error inserting peon into db", "err", err)
-	}
+	_, err := db.Exec(utils.InsertPeon(), peonID, queues)
+	return err
 }
 
 func updatePeonHeartbeat(db *sql.DB, peonId string) {
@@ -1270,108 +1055,6 @@ func updatePeonHeartbeat(db *sql.DB, peonId string) {
 	_, err := db.Exec(query, peonId)
 	if err != nil {
 		slog.Error("Error updating peon with", "id", peonId)
-	}
-}
-
-func chieftainWsHandler(w http.ResponseWriter, r *http.Request) {
-	conn, err := chieftainUpgrader.Upgrade(w, r, nil)
-	if err != nil {
-		slog.Info("upgrade failed: ", "err", err)
-		return
-	}
-	chieftain.SetConnection(conn)
-	defer func() {
-		slog.Info("Chieftain disconnected")
-		conn.Close()
-	}()
-
-	slog.Info("Chieftain connected")
-	for {
-		_, _, err := conn.ReadMessage()
-		if err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				slog.Error("websocket error:", "err", err)
-			}
-			break
-		}
-	}
-}
-
-func createWsHandler(db *sql.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			slog.Info("upgrade failed: ", "err", err)
-			return
-		}
-		peonId := r.URL.Query().Get("peon")
-		peonQueues := r.URL.Query().Get("queues")
-		slog.Info("Peon with id connected", "id", peonId, "queues", peonQueues)
-
-		insertPeonIntoDb(db, peonId, peonQueues)
-		registry.Add(peonId, conn)
-
-		defer func() {
-			slog.Info("Peon disconnected", "id", peonId)
-			registry.Remove(peonId)
-
-			_, err := db.Exec(utils.MarkPeonAsOffline(), peonId)
-			if err != nil {
-				slog.Error("Failed to update peon status to offline", "err", err)
-			}
-
-			conn.Close()
-		}()
-		// Just echo back any message received
-		for {
-			_, msg, err := conn.ReadMessage()
-			if err != nil {
-				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-					slog.Error("websocket error:", "err", err)
-				}
-				break
-			}
-
-			var wsMsg models.WebSocketMessage
-			if err := json.Unmarshal(msg, &wsMsg); err != nil {
-				slog.Error("failed to parse message", "err", err, "msg", string(msg))
-				continue
-			}
-
-			switch wsMsg.Type {
-			case "heartbeat":
-				updatePeonHeartbeat(db, peonId)
-			case "task_done":
-				slog.Info("Received task done from peon", "peon", peonId)
-				if wsMsg.Message != nil {
-					if taskID, ok := (*wsMsg.Message)["id"].(string); ok {
-						if result, ok := (*wsMsg.Message)["result"]; ok {
-							status := (*wsMsg.Message)["status"].(string)
-							_, err := db.Exec("UPDATE bountyboard SET status = ?, result = ? WHERE id = ?", status, result, taskID)
-							if err != nil {
-								slog.Error("Failed to update task status", "err", err)
-							}
-						}
-					}
-				}
-			case "ack":
-				slog.Info("Got acknowledgement from ", "peon", peonId)
-				if wsMsg.Message != nil {
-					if taskID, ok := (*wsMsg.Message)["id"].(string); ok {
-						// Update task status to RUNNING
-						_, err = db.Exec("UPDATE bountyboard SET status = 'RUNNING', peon_id = ? WHERE id = ?", peonId, taskID)
-						if err != nil {
-							slog.Error("Failed to update task status", "err", err)
-							continue
-						}
-
-					}
-				}
-			default:
-				slog.Warn("Unknown message type arrived", "msg", wsMsg.Type)
-			}
-
-		}
 	}
 }
 
@@ -1398,9 +1081,80 @@ func setupDatabase(db *sql.DB) {
 
 }
 
+func createSSEHandler(eventSender *EventSender, db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		connectionType := r.URL.Query().Get("type")
+		if connectionType == "" {
+			http.Error(w, "No type provided", http.StatusBadRequest)
+			return
+		}
+		if connectionType != "peon" && connectionType != "chieftain" {
+			http.Error(w, "Invalid type provided", http.StatusBadRequest)
+			return
+		}
+		peonID := r.URL.Query().Get("peon_id")
+		if peonID == "" && connectionType == "peon" {
+			http.Error(w, "No peon_id provided", http.StatusBadRequest)
+			return
+		}
+		queues := r.URL.Query().Get("queues")
+		if queues == "" && connectionType == "peon" {
+			http.Error(w, "No queues provided", http.StatusBadRequest)
+			return
+		}
+
+		rc := http.NewResponseController(w)
+		var connectionID string
+		if connectionType == "peon" {
+			connectionID = peonID
+			err := insertPeonIntoDb(db, peonID, queues)
+			if err != nil {
+				slog.Error("Failed to insert peon into db", "err", err)
+				http.Error(w, "Failed to insert peon into db", http.StatusInternalServerError)
+				return
+			}
+		} else {
+			connectionID = fmt.Sprintf("chieftain-%s", utils.GenerateUUID())
+		}
+
+		eventSender.Register(connectionID, w, *rc)
+		defer eventSender.Unregister(connectionID)
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+
+		connClosed := r.Context().Done()
+		for {
+			select {
+			case <-connClosed:
+				if connectionType == "peon" {
+					err := markPeonOffline(db, peonID)
+					if err != nil {
+						slog.Error("Failed to mark peon offline", "err", err)
+						return
+					}
+				}
+				return
+			case <-ticker.C:
+				// msg := fmt.Sprintf("{\"random_number\": %s}", "Hello!")
+				// err := eventSender.SendEvent(connectionID, msg)
+				// if err != nil {
+				// 	slog.Error("Failed to send event", "err", err)
+				// 	return
+				// }
+				slog.Debug("Ticker!")
+			}
+		}
+	}
+}
+
 func main() {
-	var err error
-	db, err = sql.Open("sqlite3", "workcraft.db")
+	db, err := sql.Open("sqlite3", "workcraft.db")
 	if err != nil {
 		panic(err)
 	}
@@ -1409,19 +1163,13 @@ func main() {
 	setupDatabase(db)
 	setupCronJobs(db)
 
-	registry = NewConnectionRegistry(db)
-	taskProcessor = NewTaskProcessor(db, registry)
-	chieftain = NewChieftainConnection()
+	eventSender := NewEventSender()
 
-	taskProcessor.Start()
 	fs := http.FileServer(http.Dir("static"))
 	http.Handle("/static/", http.StripPrefix("/static/", fs))
 
 	component := view.Index()
-
 	http.Handle("/", templ.Handler(component))
-	http.HandleFunc("/ws", createWsHandler(db))
-	http.HandleFunc("/ws/chieftain", chieftainWsHandler)
 	http.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
@@ -1433,6 +1181,7 @@ func main() {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
 	})
+
 	http.HandleFunc("GET /task/{id}", authMiddleware(createTaskViewHandler(db)))
 	http.HandleFunc("GET /peon/{id}/", authMiddleware(peonView))
 	http.HandleFunc("GET /peons/", authMiddleware(peonsView))
@@ -1447,11 +1196,13 @@ func main() {
 	http.HandleFunc("POST /api/task", authMiddleware(createPostTaskHandler(db)))
 	http.HandleFunc("GET /api/tasks", authMiddleware(createGetTasksHandler(db)))
 	http.HandleFunc("GET /api/task/{id}", authMiddleware(createGetTaskHandler(db)))
-	http.HandleFunc("POST /api/task/{id}/cancel", authMiddleware(createCancelTaskHandler(registry)))
+	http.HandleFunc("POST /api/task/{id}/cancel", authMiddleware(createCancelTaskHandler(db)))
 	http.HandleFunc("POST /api/task/{id}/update", authMiddleware(createTaskUpdateHandler(db)))
 	http.HandleFunc("POST /api/task/{id}/acknowledgement", authMiddleware(createPostTaskAcknowledgementHandler(db)))
 
-	http.HandleFunc("GET /api/test", authMiddleware(testHandler))
+	http.HandleFunc("GET /api/test", authMiddleware(createTestHandler(eventSender)))
+
+	http.HandleFunc("/events", createSSEHandler(eventSender, db))
 
 	slog.Info("Building Stronghold on port 6112")
 	http.ListenAndServe(":6112", nil)
