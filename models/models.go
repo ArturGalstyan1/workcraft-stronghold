@@ -6,6 +6,32 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+type Stats struct {
+	Type   string      `json:"type"`
+	Value  interface{} `json:"value"`
+	PeonID *string     `json:"peon_id"`
+	TaskID *string     `json:"task_id"`
+}
+
+type PeonUpdate struct {
+	Status        *string `json:"status,omitempty" db:"status"`
+	LastHeartbeat *string `json:"last_heartbeat,omitempty" db:"last_heartbeat"`
+	CurrentTask   *string `json:"current_task,omitempty" db:"current_task"`
+	Queues        *string `json:"queues,omitempty" db:"queues"`
+}
+
+type TaskUpdate struct {
+	Status         *string      `db:"status"`
+	TaskName       *string      `db:"task_name"`
+	PeonId         *string      `db:"peon_id"`
+	Queue          *string      `db:"queue"`
+	Payload        *interface{} `db:"payload"`
+	Result         *string      `db:"result"`
+	RetryOnFailure *bool        `db:"retry_on_failure"`
+	RetryCount     *int         `db:"retry_count"`
+	RetryLimit     *int         `db:"retry_limit"`
+}
+
 type WebSocketMessage struct {
 	Type    string                  `json:"type"`
 	Message *map[string]interface{} `json:"message,omitempty"`

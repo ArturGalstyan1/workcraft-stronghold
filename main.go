@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Artur-Galstyan/workcraft-stronghold/models"
+	"github.com/Artur-Galstyan/workcraft-stronghold/sqls"
 	"github.com/Artur-Galstyan/workcraft-stronghold/utils"
 	"github.com/Artur-Galstyan/workcraft-stronghold/view"
 	"github.com/a-h/templ"
@@ -114,11 +115,6 @@ func init() {
 	hasher := sha256.New()
 	hasher.Write([]byte(apiKey))
 	hashedApiKey = hex.EncodeToString(hasher.Sum(nil))
-}
-
-func markPeonOffline(db *sql.DB, peonID string) error {
-	_, err := db.Exec(utils.MarkPeonAsOffline(), peonID)
-	return err
 }
 
 func loginHandler(w http.ResponseWriter, r *http.Request) {
@@ -226,7 +222,7 @@ func setupCronJobs(db *sql.DB) {
 	c.AddFunc("* * * * *", func() {
 		cronMutex.Lock()
 		defer cronMutex.Unlock()
-		_, err := db.Exec(utils.CleanPeons())
+		_, err := db.Exec(sqls.CleanPeons())
 		if err != nil {
 			slog.Error("Failed to clean up dead peons", "err", err)
 			return
@@ -245,7 +241,7 @@ func setupCronJobs(db *sql.DB) {
 		}
 
 		defer tx.Rollback()
-		rows, err := tx.Query(utils.CleanBountyboard())
+		rows, err := tx.Query(sqls.CleanBountyboard())
 		if err == sql.ErrNoRows {
 			return
 		}
@@ -314,39 +310,11 @@ func createGetPeonTaskHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		rows, err := db.Query("SELECT * FROM bountyboard WHERE peon_id = ?", peonID)
+		tasks, err := sqls.GetTasksByPeonID(db, peonID)
 		if err != nil {
 			slog.Error("Error querying tasks", "err", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
-		}
-
-		defer rows.Close()
-
-		var tasks []models.Task
-
-		for rows.Next() {
-			var task models.Task
-			var payloadJSON string
-
-			err := rows.Scan(&task.ID, &task.Status, &task.CreatedAt, &task.UpdatedAt, &task.TaskName, &task.PeonId, &task.Queue, &payloadJSON, &task.Result, &task.RetryOnFailure, &task.RetryCount, &task.RetryLimit)
-
-			if err != nil {
-				slog.Error("Error scanning task", "err", err)
-				continue
-			}
-
-			err = json.Unmarshal([]byte(payloadJSON), &task.Payload)
-			if err != nil {
-				slog.Error("Error parsing payload", "err", err)
-				continue
-			}
-
-			tasks = append(tasks, task)
-		}
-
-		if len(tasks) == 0 {
-			tasks = []models.Task{}
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -371,7 +339,7 @@ func createGetPeonHandler(db *sql.DB) http.HandlerFunc {
 
 		var peon models.Peon
 
-		err := db.QueryRow("SELECT * FROM peon WHERE id = ?", peonID).Scan(&peon.ID, &peon.Status, &peon.LastHeartbeat, &peon.CurrentTask, &peon.Queues)
+		peon, err := sqls.GetPeonByID(db, peonID)
 		if err == sql.ErrNoRows {
 			http.Error(w, "Peon not found", http.StatusNotFound)
 			return
@@ -579,14 +547,7 @@ func createPostTaskAcknowledgementHandler(db *sql.DB) http.HandlerFunc {
 func createPostStatisticsHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// slog.Info("Received statistics update")
-
-		var stats struct {
-			Type   string      `json:"type"`
-			Value  interface{} `json:"value"`
-			PeonID *string     `json:"peon_id"`
-			TaskID *string     `json:"task_id"`
-		}
-
+		var stats models.Stats
 		err := json.NewDecoder(r.Body).Decode(&stats)
 		if err != nil {
 			slog.Error("Failed to decode request body", "err", err)
@@ -594,17 +555,11 @@ func createPostStatisticsHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		valueJSON, err := json.Marshal(stats.Value)
+		err = sqls.CreateStats(db, stats)
 		if err != nil {
-			slog.Error("Failed to serialize value", "err", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			slog.Error("Failed to insert stats", "err", err)
+			http.Error(w, "Failed to insert stats", http.StatusInternalServerError)
 			return
-		}
-
-		query := `INSERT INTO stats (type, value, peon_id, task_id) VALUES (?, ?, ?, ?)`
-		_, err = db.Exec(query, stats.Type, valueJSON, stats.PeonID, stats.TaskID)
-		if err != nil {
-			slog.Error("Failed to insert statistics into database", "err", err)
 		}
 
 		w.WriteHeader(http.StatusCreated)
@@ -629,7 +584,6 @@ func createGetPeonsHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		// First, get total count
 		countQuery, countArgs, err := utils.BuildPeonQuery(queryParams.Filter)
 		countQuery = strings.Replace(countQuery, "SELECT *", "SELECT COUNT(*)", 1)
 		if err != nil {
@@ -645,7 +599,6 @@ func createGetPeonsHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		// Then get paginated items
 		sqlQuery, args, err := utils.BuildPeonQuery(queryParams.Filter)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Invalid filter: %v", err), http.StatusBadRequest)
@@ -680,7 +633,6 @@ func createGetPeonsHandler(db *sql.DB) http.HandlerFunc {
 			peons = []models.Peon{}
 		}
 
-		// Calculate total pages
 		totalPages := (totalItems + queryParams.PerPage - 1) / queryParams.PerPage
 
 		response := models.PaginatedResponse{
@@ -702,14 +654,8 @@ func createGetPeonsHandler(db *sql.DB) http.HandlerFunc {
 
 func createUpdatePeonHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// slog.Info("POST /api/peon/{id}/update")
-		var update struct {
-			Status        *string `json:"status,omitempty"`
-			LastHeartbeat *string `json:"last_heartbeat,omitempty"`
-			CurrentTask   *string `json:"current_task,omitempty"`
-			Queues        *string `json:"queues,omitempty"`
-		}
-
+		peonID := r.PathValue("id")
+		var update models.PeonUpdate
 		err := json.NewDecoder(r.Body).Decode(&update)
 		if err != nil {
 			slog.Error("Failed to decode request body", "err", err)
@@ -717,89 +663,24 @@ func createUpdatePeonHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		query := "UPDATE peon SET"
-		var args []interface{}
-		var setClauses []string
-
-		if update.Status != nil {
-			setClauses = append(setClauses, "status = ?")
-			args = append(args, *update.Status)
-		}
-		if update.LastHeartbeat != nil {
-			setClauses = append(setClauses, "last_heartbeat = ?")
-			args = append(args, *update.LastHeartbeat)
-		}
-
-		setClauses = append(setClauses, "current_task = ?")
-		if update.CurrentTask != nil {
-			args = append(args, *update.CurrentTask)
-		} else {
-			args = append(args, nil)
-		}
-		if update.Queues != nil {
-			setClauses = append(setClauses, "queues = ?")
-			args = append(args, *update.Queues)
-		}
-
-		if len(setClauses) == 0 {
-			http.Error(w, "No fields to update", http.StatusBadRequest)
-			return
-		}
-
-		query += " " + strings.Join(setClauses, ", ")
-		query += " WHERE id = ?"
-
-		peonID := r.PathValue("id")
-		args = append(args, peonID)
-
-		_, err = db.Exec(query, args...)
+		updatedPeon, err := sqls.UpdatePeon(db, peonID, update)
 		if err != nil {
 			slog.Error("Failed to update peon", "err", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
 		}
 
-		// Construct updated peon directly from the update data
-		var (
-			currentTask *string
-			queues      *string
-		)
-		if update.CurrentTask != nil {
-			val := *update.CurrentTask
-			currentTask = &val
-		}
-		if update.Queues != nil {
-			val := *update.Queues
-			queues = &val
-		}
-
-		updatedPeon := models.Peon{
-			ID: peonID,
-		}
-
-		// Set only the fields that were updated
-		if update.Status != nil {
-			updatedPeon.Status = *update.Status
-		}
-		if update.LastHeartbeat != nil {
-			updatedPeon.LastHeartbeat = *update.LastHeartbeat
-		}
-		updatedPeon.CurrentTask = currentTask // Always set this, may be nil
-		if update.Queues != nil {
-			updatedPeon.Queues = queues
-		}
-
 		peonJSON, err := json.Marshal(updatedPeon)
 		if err != nil {
 			slog.Error("Failed to serialize updated peon", "err", err)
-		} else {
-			fmt.Sprintf(`{"type": "peon_update", "message": {"peon": %s}}`,
-				string(peonJSON))
-			// TODO: Notify Chieftain
-			if err != nil {
-				slog.Error("Failed to send peon update to chieftain", "err", err)
-			}
+			http.Error(w, "Failed to serialize updated peon", http.StatusInternalServerError)
+			return
 		}
+
+		msg := fmt.Sprintf(`{"type": "peon_update", "message": {"peon": %s}}`,
+			string(peonJSON))
+		slog.Info(msg)
+		// TODO: Notify Chieftain
 
 		w.WriteHeader(http.StatusNoContent)
 	}
@@ -817,21 +698,18 @@ func createCancelTaskHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		slog.Info("Received cancel for task", "id", taskID)
-		var peonID string
-		var status string
-		err := db.QueryRow("SELECT peon_id, status FROM bountyboard WHERE id = ?", taskID).Scan(&peonID, &status)
+		task, err := sqls.GetTaskByID(db, taskID)
 		if err == sql.ErrNoRows {
 			http.Error(w, "Task not found", http.StatusNotFound)
 			return
 		}
-
 		if err != nil {
 			slog.Error("Failed to fetch task", "err", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
 		}
 
-		if status != "RUNNING" {
+		if task.Status != "RUNNING" {
 			http.Error(w, "Task is not running", http.StatusBadRequest)
 			return
 		}
@@ -874,7 +752,6 @@ func createGetTasksHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		// First, get total count
 		countQuery, countArgs, err := utils.BuildTaskQuery(queryParams.Filter)
 		countQuery = strings.Replace(countQuery, "SELECT *", "SELECT COUNT(*)", 1)
 		if err != nil {
@@ -890,7 +767,6 @@ func createGetTasksHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		// Then get paginated items
 		sqlQuery, args, err := utils.BuildTaskQuery(queryParams.Filter)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Invalid filter: %v", err), http.StatusBadRequest)
@@ -962,25 +838,15 @@ func createGetTaskHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		var task models.Task
-		var payloadJSON string
-
-		err := db.QueryRow("SELECT * FROM bountyboard WHERE id = ?", taskID).Scan(&task.ID, &task.Status, &task.CreatedAt, &task.UpdatedAt, &task.TaskName, &task.PeonId, &task.Queue, &payloadJSON, &task.Result, &task.RetryOnFailure, &task.RetryCount, &task.RetryLimit)
-
+		task, err := sqls.GetTaskByID(db, taskID)
 		if err == sql.ErrNoRows {
+			slog.Error("Task not found")
 			http.Error(w, "Task not found", http.StatusNotFound)
 			return
 		}
 
 		if err != nil {
-			slog.Error("Failed to fetch task", "err", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
-		}
-
-		err = json.Unmarshal([]byte(payloadJSON), &task.Payload)
-		if err != nil {
-			slog.Error("Error parsing payload", "err", err)
+			slog.Error("Failed to retrieve task", "err", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
 		}
@@ -1004,29 +870,17 @@ func createPostTaskHandler(db *sql.DB) http.HandlerFunc {
 			http.Error(w, "Invalid request body", http.StatusBadRequest)
 			return
 		}
-
-		// Validate the task
-		if task.TaskName == "" {
-			slog.Error("Task name is required")
-			http.Error(w, "Task name is required", http.StatusBadRequest)
-			return
-		}
 		task.Status = models.TaskStatusPending
 
 		slog.Info("Creating task with ID and name", "id", task.ID, "name", task.TaskName)
-		payloadJSON, err := json.Marshal(task.Payload)
+
+		err = sqls.CreateTask(db, task)
 		if err != nil {
-			slog.Error("Failed to serialize payload", "err", err)
+			slog.Error("Failed to create task", "err", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
 		}
 
-		_, err = db.Exec(utils.InsertIntoBountyboard(), task.ID, task.Status, task.TaskName, task.Queue, payloadJSON, task.RetryOnFailure, task.RetryLimit)
-		if err != nil {
-			slog.Error("Failed to insert task into database", "err", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
-		}
 		w.WriteHeader(http.StatusCreated)
 
 		err = json.NewEncoder(w).Encode(task)
@@ -1038,47 +892,6 @@ func createPostTaskHandler(db *sql.DB) http.HandlerFunc {
 		// TODO: Add task
 
 	}
-}
-
-func insertPeonIntoDb(db *sql.DB, peonID string, peonQueues string) error {
-	var queues interface{} = nil
-	if peonQueues != "NULL" {
-		queues = peonQueues
-	}
-
-	_, err := db.Exec(utils.InsertPeon(), peonID, queues)
-	return err
-}
-
-func updatePeonHeartbeat(db *sql.DB, peonId string) {
-	query := `UPDATE peon SET last_heartbeat = datetime('now') WHERE id = ?`
-	_, err := db.Exec(query, peonId)
-	if err != nil {
-		slog.Error("Error updating peon with", "id", peonId)
-	}
-}
-
-func setupDatabase(db *sql.DB) {
-	queries := []string{
-		utils.CreatePeonTable(),
-		utils.CreatePeonTrigger(),
-		utils.CreateBountyboardTable(),
-		utils.CreateBountyboardTrigger(),
-		utils.CreateStatsTable(),
-	}
-
-	for _, q := range queries {
-		_, err := db.Exec(q)
-		if err != nil {
-			slog.Error("Error executing query", "query", q, "err", err)
-		}
-	}
-
-	_, err := db.Exec("UPDATE peon SET status = 'OFFLINE'")
-	if err != nil {
-		slog.Error("Error setting all peons to offline", "err", err)
-	}
-
 }
 
 func createSSEHandler(eventSender *EventSender, db *sql.DB) http.HandlerFunc {
@@ -1107,7 +920,7 @@ func createSSEHandler(eventSender *EventSender, db *sql.DB) http.HandlerFunc {
 		var connectionID string
 		if connectionType == "peon" {
 			connectionID = peonID
-			err := insertPeonIntoDb(db, peonID, queues)
+			err := sqls.InsertPeonIntoDb(db, peonID, queues)
 			if err != nil {
 				slog.Error("Failed to insert peon into db", "err", err)
 				http.Error(w, "Failed to insert peon into db", http.StatusInternalServerError)
@@ -1133,7 +946,10 @@ func createSSEHandler(eventSender *EventSender, db *sql.DB) http.HandlerFunc {
 			select {
 			case <-connClosed:
 				if connectionType == "peon" {
-					err := markPeonOffline(db, peonID)
+					status := "OFFLINE"
+					_, err := sqls.UpdatePeon(db, peonID, models.PeonUpdate{
+						Status: &status,
+					})
 					if err != nil {
 						slog.Error("Failed to mark peon offline", "err", err)
 						return
@@ -1160,7 +976,7 @@ func main() {
 	}
 	defer db.Close()
 
-	setupDatabase(db)
+	sqls.SetupDatabase(db)
 	setupCronJobs(db)
 
 	eventSender := NewEventSender()
