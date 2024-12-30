@@ -10,17 +10,15 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
+	"github.com/Artur-Galstyan/workcraft-stronghold/events"
 	"github.com/Artur-Galstyan/workcraft-stronghold/handlers"
 	"github.com/Artur-Galstyan/workcraft-stronghold/models"
 	"github.com/Artur-Galstyan/workcraft-stronghold/sqls"
-	"github.com/Artur-Galstyan/workcraft-stronghold/utils"
 	"github.com/Artur-Galstyan/workcraft-stronghold/views"
 	"github.com/a-h/templ"
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/joho/godotenv"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/robfig/cron/v3"
@@ -28,7 +26,6 @@ import (
 
 // Constants
 const (
-	TokenExpiration        = time.Hour * 24 // 24 hours
 	HeartbeatClearInterval = time.Second * 30
 )
 
@@ -37,68 +34,6 @@ var (
 	hashedApiKey string
 	db           *sql.DB
 )
-
-type EventSender struct {
-	connections map[string]http.ResponseWriter
-	controllers map[string]http.ResponseController
-	mu          sync.RWMutex
-}
-
-func NewEventSender() *EventSender {
-	return &EventSender{
-		connections: make(map[string]http.ResponseWriter),
-		controllers: make(map[string]http.ResponseController),
-	}
-}
-
-func (s *EventSender) Register(ID string, w http.ResponseWriter, rc http.ResponseController) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.connections[ID] = w
-	s.controllers[ID] = rc
-}
-
-func (s *EventSender) Unregister(ID string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.connections, ID)
-	delete(s.controllers, ID)
-}
-
-func (s *EventSender) SendEvent(ID string, msg string) error {
-	s.mu.RLock()
-	w, exists := s.connections[ID]
-	rc, _ := s.controllers[ID]
-	s.mu.RUnlock()
-
-	if !exists {
-		return fmt.Errorf("no connection found for ID: %s", ID)
-	}
-
-	_, err := fmt.Fprintf(w, "data: %s\n\n", msg)
-	if err != nil {
-		return err
-	}
-	return rc.Flush()
-}
-
-func (s *EventSender) BroadcastToChieftains(msg string) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	for id := range s.connections {
-		if strings.HasPrefix(id, "chieftain-") {
-			w := s.connections[id]
-			rc := s.controllers[id]
-			_, err := fmt.Fprintf(w, "data: %s\n\n", msg)
-			if err != nil {
-				slog.Error("Failed to write to writer", "err", err)
-				continue
-			}
-			rc.Flush()
-		}
-	}
-}
 
 func init() {
 	if err := godotenv.Load(); err != nil {
@@ -113,50 +48,6 @@ func init() {
 	hasher := sha256.New()
 	hasher.Write([]byte(apiKey))
 	hashedApiKey = hex.EncodeToString(hasher.Sum(nil))
-}
-
-func loginHandler(w http.ResponseWriter, r *http.Request) {
-	var creds models.Credentials
-	if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	if creds.Username != os.Getenv("WORKCRAFT_CHIEFTAIN_USER") ||
-		creds.Password != os.Getenv("WORKCRAFT_CHIEFTAIN_PASS") {
-		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
-		return
-	}
-
-	// Create the JWT claims
-	now := time.Now()
-	claims := models.Claims{
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(now.Add(TokenExpiration)),
-			IssuedAt:  jwt.NewNumericDate(now),
-			NotBefore: jwt.NewNumericDate(now),
-		},
-		APIKey: os.Getenv("WORKCRAFT_API_KEY"),
-	}
-
-	// Create and sign the token using the API key as the secret
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	signedToken, err := token.SignedString([]byte(os.Getenv("WORKCRAFT_API_KEY")))
-	if err != nil {
-		slog.Error("Failed to sign token", "err", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	http.SetCookie(w, &http.Cookie{
-		Name:     "workcraft_auth",
-		Value:    signedToken,
-		HttpOnly: true,  // Cannot be accessed by JavaScript
-		Secure:   false, // false for development, true for production
-		SameSite: http.SameSiteStrictMode,
-		Path:     "/",
-		MaxAge:   int(TokenExpiration.Seconds()), // Match JWT expiration
-	})
 }
 
 func setupCronJobs(db *sql.DB) {
@@ -221,7 +112,7 @@ func setupCronJobs(db *sql.DB) {
 	c.Start()
 }
 
-func createTestHandler(eventSender *EventSender) http.HandlerFunc {
+func createTestHandler(eventSender *events.EventSender) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		slog.Info("GET /test")
 		eventSender.BroadcastToChieftains("HI")
@@ -229,78 +120,7 @@ func createTestHandler(eventSender *EventSender) http.HandlerFunc {
 	}
 }
 
-func createSSEHandler(eventSender *EventSender, db *sql.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		connectionType := r.URL.Query().Get("type")
-		if connectionType == "" {
-			http.Error(w, "No type provided", http.StatusBadRequest)
-			return
-		}
-		if connectionType != "peon" && connectionType != "chieftain" {
-			http.Error(w, "Invalid type provided", http.StatusBadRequest)
-			return
-		}
-		peonID := r.URL.Query().Get("peon_id")
-		if peonID == "" && connectionType == "peon" {
-			http.Error(w, "No peon_id provided", http.StatusBadRequest)
-			return
-		}
-		queues := r.URL.Query().Get("queues")
-		if queues == "" && connectionType == "peon" {
-			http.Error(w, "No queues provided", http.StatusBadRequest)
-			return
-		}
-
-		rc := http.NewResponseController(w)
-		var connectionID string
-		if connectionType == "peon" {
-			slog.Info("Peon connected", "peon_id", peonID)
-			connectionID = peonID
-			err := sqls.InsertPeonIntoDb(db, peonID, queues)
-			if err != nil {
-				slog.Error("Failed to insert peon into db", "err", err)
-				http.Error(w, "Failed to insert peon into db", http.StatusInternalServerError)
-				return
-			}
-		} else {
-			connectionID = fmt.Sprintf("chieftain-%s", utils.GenerateUUID())
-		}
-
-		eventSender.Register(connectionID, w, *rc)
-		defer eventSender.Unregister(connectionID)
-
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-
-		ticker := time.NewTicker(time.Second)
-		defer ticker.Stop()
-
-		connClosed := r.Context().Done()
-		for {
-			select {
-			case <-connClosed:
-				if connectionType == "peon" {
-					slog.Info("Peon disconnected", "peon_id", peonID)
-					status := "OFFLINE"
-					_, err := sqls.UpdatePeon(db, peonID, models.PeonUpdate{
-						Status: &status,
-					})
-					if err != nil {
-						slog.Error("Failed to mark peon offline", "err", err)
-						return
-					}
-				}
-				return
-			case <-ticker.C:
-				slog.Debug("Ticker!")
-			}
-		}
-	}
-}
-
-func sendPendingTasks(db *sql.DB, eventSender *EventSender) {
+func sendPendingTasks(db *sql.DB, eventSender *events.EventSender) {
 	task, err := sqls.GetTaskFromQueue(db)
 	if err == sql.ErrNoRows {
 		return
@@ -353,7 +173,7 @@ func sendPendingTasks(db *sql.DB, eventSender *EventSender) {
 
 }
 
-func sendPendingTasksInterval(db *sql.DB, eventSender *EventSender) {
+func sendPendingTasksInterval(db *sql.DB, eventSender *events.EventSender) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 
@@ -379,7 +199,7 @@ func main() {
 	}
 	setupCronJobs(db)
 
-	eventSender := NewEventSender()
+	eventSender := events.NewEventSender()
 
 	fs := http.FileServer(http.Dir("static"))
 	http.Handle("/static/", http.StripPrefix("/static/", fs))
@@ -392,7 +212,7 @@ func main() {
 			component := views.Login()
 			templ.Handler(component).ServeHTTP(w, r)
 		case http.MethodPost:
-			loginHandler(w, r)
+			handlers.LoginHandler(w, r)
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
@@ -416,7 +236,7 @@ func main() {
 	http.HandleFunc("POST /api/task/{id}/update", handlers.AuthMiddleware(handlers.CreateTaskUpdateHandler(db), hashedApiKey))
 	http.HandleFunc("POST /api/task/{id}/acknowledgement", handlers.AuthMiddleware(handlers.CreatePostTaskAcknowledgementHandler(db), hashedApiKey))
 	http.HandleFunc("GET /api/test", handlers.AuthMiddleware(createTestHandler(eventSender), hashedApiKey))
-	http.HandleFunc("/events", createSSEHandler(eventSender, db))
+	http.HandleFunc("/events", handlers.CreateSSEHandler(eventSender, db))
 
 	go sendPendingTasksInterval(db, eventSender)
 
