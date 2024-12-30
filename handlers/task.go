@@ -232,9 +232,6 @@ func CreatePostTaskHandler(db *sql.DB) http.HandlerFunc {
 			slog.Error("Failed to encode task", "err", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 		}
-
-		// TODO: Add task
-
 	}
 }
 

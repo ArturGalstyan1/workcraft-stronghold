@@ -160,6 +160,17 @@ func GetCreateStatsTableSQL() string {
 	`
 }
 
+func GetCreateQueueTableSQL() string {
+	return `
+	CREATE TABLE IF NOT EXISTS queue (
+		id INTEGER PRIMARY KEY,
+		created_at TIMESTAMP DEFAULT (datetime ('now')),
+		task_id CHAR(36) NOT NULL,
+		FOREIGN KEY (task_id) REFERENCES bountyboard (id)
+	);
+	`
+}
+
 func InsertIntoBountyboard() string {
 	return `
 		INSERT INTO bountyboard (id, status, task_name, queue, payload, retry_on_failure, retry_limit) VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -179,11 +190,14 @@ func SetupDatabase(db *sql.DB) error {
 		GetCreateBountyboardTableSQL(),
 		GetCreateBountyboardTriggerSQL(),
 		GetCreateStatsTableSQL(),
+		GetCreateQueueTableSQL(),
 	}
 
 	for _, q := range queries {
 		_, err := db.Exec(q)
-		return err
+		if err != nil {
+			return err
+		}
 	}
 
 	_, err := db.Exec("UPDATE peon SET status = 'OFFLINE'")
@@ -244,8 +258,8 @@ func InsertPeonIntoDb(db *sql.DB, peonID string, peonQueues string) error {
 	if peonQueues != "NULL" {
 		queues = peonQueues
 	}
-	query := "INSERT INTO peon (id, queues) VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET status = 'IDLE'"
-	_, err := db.Exec(query, peonID, queues)
+	query := "INSERT INTO peon (id, queues) VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET status = 'IDLE', last_heartbeat = datetime('now'), current_task = NULL, queues = ?"
+	_, err := db.Exec(query, peonID, queues, queues)
 	return err
 }
 
@@ -348,6 +362,11 @@ func CreateTask(db *sql.DB, task models.Task) error {
 	}
 	if rows == 0 {
 		return fmt.Errorf("no rows affected when creating task")
+	}
+
+	_, err = db.Exec("INSERT INTO queue (task_id) VALUES (?)", task.ID)
+	if err != nil {
+		return fmt.Errorf("failed to insert into queue: %w", err)
 	}
 
 	return nil
@@ -470,4 +489,28 @@ func CreateStats(db *sql.DB, stats models.Stats) error {
 	}
 
 	return nil
+}
+
+func DeleteTaskFromQueue(db *sql.DB, taskID string) error {
+	_, err := db.Exec("DELETE FROM queue WHERE task_id = ?", taskID)
+	return err
+}
+
+func GetTaskFromQueue(db *sql.DB) (models.Task, error) {
+	var taskID string
+	err := db.QueryRow("SELECT task_id FROM queue ORDER BY created_at ASC LIMIT 1").Scan(&taskID)
+	if err != nil {
+		return models.Task{}, err
+	}
+	return GetTaskByID(db, taskID)
+}
+
+func GetPeonForTask(db *sql.DB, queue string) (models.Peon, error) {
+	var peonID string
+	err := db.QueryRow(GetIdlePeons(), queue).Scan(&peonID)
+	if err != nil {
+		return models.Peon{}, err
+	}
+
+	return GetPeonByID(db, peonID)
 }

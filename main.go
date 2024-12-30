@@ -52,7 +52,6 @@ func NewEventSender() *EventSender {
 }
 
 func (s *EventSender) Register(ID string, w http.ResponseWriter, rc http.ResponseController) {
-	slog.Info("Registering", "ID", ID)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.connections[ID] = w
@@ -60,7 +59,6 @@ func (s *EventSender) Register(ID string, w http.ResponseWriter, rc http.Respons
 }
 
 func (s *EventSender) Unregister(ID string) {
-	slog.Info("Unregistering", "ID", ID)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.connections, ID)
@@ -256,6 +254,7 @@ func createSSEHandler(eventSender *EventSender, db *sql.DB) http.HandlerFunc {
 		rc := http.NewResponseController(w)
 		var connectionID string
 		if connectionType == "peon" {
+			slog.Info("Peon connected", "peon_id", peonID)
 			connectionID = peonID
 			err := sqls.InsertPeonIntoDb(db, peonID, queues)
 			if err != nil {
@@ -283,6 +282,7 @@ func createSSEHandler(eventSender *EventSender, db *sql.DB) http.HandlerFunc {
 			select {
 			case <-connClosed:
 				if connectionType == "peon" {
+					slog.Info("Peon disconnected", "peon_id", peonID)
 					status := "OFFLINE"
 					_, err := sqls.UpdatePeon(db, peonID, models.PeonUpdate{
 						Status: &status,
@@ -294,16 +294,76 @@ func createSSEHandler(eventSender *EventSender, db *sql.DB) http.HandlerFunc {
 				}
 				return
 			case <-ticker.C:
-				// msg := fmt.Sprintf("{\"random_number\": %s}", "Hello!")
-				// err := eventSender.SendEvent(connectionID, msg)
-				// if err != nil {
-				// 	slog.Error("Failed to send event", "err", err)
-				// 	return
-				// }
 				slog.Debug("Ticker!")
 			}
 		}
 	}
+}
+
+func sendPendingTasks(db *sql.DB, eventSender *EventSender) {
+	task, err := sqls.GetTaskFromQueue(db)
+	if err == sql.ErrNoRows {
+		return
+	}
+	if err != nil {
+		slog.Error("Failed to get task from queue", "err", err)
+		return
+	}
+	idlePeon, err := sqls.GetPeonForTask(db, task.Queue)
+	if err == sql.ErrNoRows {
+		slog.Info("No idle peons found")
+		return
+	}
+	if err != nil {
+		slog.Error("Failed to get peon for task", "err", err)
+		return
+	}
+
+	taskJSON, err := json.Marshal(task)
+
+	if err != nil {
+		slog.Error("Failed to marshal task", "err", err)
+		return
+	}
+	msgString := fmt.Sprintf("{\"type\": \"%s\", \"data\": %s}", "new_task", string(taskJSON))
+
+	eventSender.SendEvent(idlePeon.ID, msgString)
+
+	status := "RUNNING"
+	_, err = sqls.UpdateTask(db, task.ID, models.TaskUpdate{Status: &status, PeonId: &idlePeon.ID})
+	if err != nil {
+		slog.Error("Failed to update task status to RUNNING", "err", err)
+		return
+	}
+
+	status = "WORKING"
+	_, err = sqls.UpdatePeon(db, idlePeon.ID, models.PeonUpdate{Status: &status, CurrentTask: &task.ID})
+	if err != nil {
+		slog.Error("Failed to update peon status to WORKING", "err", err)
+		return
+	}
+
+	slog.Info("Sent task to peon", "task_id", task.ID, "peon_id", idlePeon.ID)
+
+	err = sqls.DeleteTaskFromQueue(db, task.ID)
+	if err != nil {
+		slog.Error("Failed to delete task from queue", "err", err)
+		return
+	}
+
+}
+
+func sendPendingTasksInterval(db *sql.DB, eventSender *EventSender) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			sendPendingTasks(db, eventSender)
+		}
+	}
+
 }
 
 func main() {
@@ -313,7 +373,10 @@ func main() {
 	}
 	defer db.Close()
 
-	sqls.SetupDatabase(db)
+	err = sqls.SetupDatabase(db)
+	if err != nil {
+		panic(err)
+	}
 	setupCronJobs(db)
 
 	eventSender := NewEventSender()
@@ -352,11 +415,14 @@ func main() {
 	http.HandleFunc("POST /api/task/{id}/cancel", handlers.AuthMiddleware(handlers.CreateCancelTaskHandler(db), hashedApiKey))
 	http.HandleFunc("POST /api/task/{id}/update", handlers.AuthMiddleware(handlers.CreateTaskUpdateHandler(db), hashedApiKey))
 	http.HandleFunc("POST /api/task/{id}/acknowledgement", handlers.AuthMiddleware(handlers.CreatePostTaskAcknowledgementHandler(db), hashedApiKey))
-
 	http.HandleFunc("GET /api/test", handlers.AuthMiddleware(createTestHandler(eventSender), hashedApiKey))
-
 	http.HandleFunc("/events", createSSEHandler(eventSender, db))
 
+	go sendPendingTasksInterval(db, eventSender)
+
 	slog.Info("Building Stronghold on port 6112")
-	http.ListenAndServe(":6112", nil)
+	if err := http.ListenAndServe(":6112", nil); err != nil {
+		slog.Error("Server failed", "error", err)
+	}
+
 }

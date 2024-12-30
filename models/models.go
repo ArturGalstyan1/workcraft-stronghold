@@ -32,7 +32,7 @@ type TaskUpdate struct {
 	RetryLimit     *int         `db:"retry_limit"`
 }
 
-type WebSocketMessage struct {
+type SSEMessage struct {
 	Type    string                  `json:"type"`
 	Message *map[string]interface{} `json:"message,omitempty"`
 }
