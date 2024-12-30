@@ -1,12 +1,9 @@
 .PHONY: dev
 
 dev:
-	@trap 'kill 0' EXIT; \
-	lsof -ti:6112 | xargs kill -9 2>/dev/null || true && \
 	templ generate -watch & \
 	npx tailwindcss -i ./static/css/input.css -o ./static/css/output.css --watch & \
-	go run main.go & \
-	wait
+	go run main.go
 
 recreate_db:
 	@rm workcraft.db
