@@ -2,7 +2,7 @@ root = "."
 tmp_dir = "tmp"
 
 [build]
-cmd = "templ generate && go build -o ./tmp/main ."
+cmd = "templ generate &&lsof -ti:6112 | xargs kill -9 && go build -o ./tmp/main ."
 bin = "./tmp/main"
 include_ext = ["go", "templ"]
 exclude_dir = ["tmp", "vendor", "node_modules"]

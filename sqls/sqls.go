@@ -538,7 +538,7 @@ func CleanInconsistencies(db *sql.DB) error {
 	rows, err := tx.Query(CleanBountyboard())
 	if err == sql.ErrNoRows {
 		return nil
-	} else {
+	} else if err != nil {
 		slog.Error("Failed to find inconsistent tasks", "err", err)
 	}
 

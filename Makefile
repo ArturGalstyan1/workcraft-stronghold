@@ -2,9 +2,7 @@
 
 dev:
 	@trap 'kill 0' EXIT; \
-	templ generate && \
 	air & \
-	templ generate -watch & \
 	npx tailwindcss -i ./static/css/input.css -o ./static/css/output.css --watch & \
 	wait
 

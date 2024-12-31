@@ -61,6 +61,13 @@ func CreateSSEHandler(eventSender *events.EventSender, db *sql.DB) http.HandlerF
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 
+		connectedJSON := fmt.Sprintf("{\"type\": \"connected\", \"connection_id\": \"%s\"}", connectionID)
+		err := eventSender.SendEvent(connectionID, connectedJSON)
+		if err != nil {
+			slog.Error("Failed to send connected event", "err", err)
+			return
+		}
+
 		connClosed := r.Context().Done()
 		for {
 			select {

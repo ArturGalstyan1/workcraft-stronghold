@@ -178,9 +178,9 @@ func CreateUpdatePeonHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		msg := fmt.Sprintf(`{"type": "peon_update", "message": {"peon": %s}}`,
+		fmt.Sprintf(`{"type": "peon_update", "message": {"peon": %s}}`,
 			string(peonJSON))
-		slog.Info(msg)
+		// slog.Info(msg)
 		// TODO: Notify Chieftain
 
 		w.WriteHeader(http.StatusNoContent)
