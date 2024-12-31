@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"strings"
 
@@ -62,7 +63,7 @@ func CleanBountyboard() string {
     UPDATE bountyboard
     SET status = 'PENDING',
         peon_id = NULL
-    WHERE status = 'RUNNING'
+    WHERE status = 'RUNNING' OR status = 'ACKNOWLEDGED'
     AND peon_id IS NOT NULL
     AND (
         NOT EXISTS (
@@ -109,7 +110,8 @@ func GetCreateBountyboardTableSQL() string {
 	            'SUCCESS',
 	            'FAILURE',
 	            'INVALID',
-                'CANCELLED'
+                'CANCELLED',
+                'ACKNOWLEDGED'
 	        )
 	    ),
 	    created_at TIMESTAMP DEFAULT (datetime ('now')),
@@ -166,6 +168,7 @@ func GetCreateQueueTableSQL() string {
 		id INTEGER PRIMARY KEY,
 		created_at TIMESTAMP DEFAULT (datetime ('now')),
 		task_id CHAR(36) NOT NULL,
+		queued BOOLEAN DEFAULT FALSE,
 		FOREIGN KEY (task_id) REFERENCES bountyboard (id)
 	);
 	`
@@ -496,9 +499,14 @@ func DeleteTaskFromQueue(db *sql.DB, taskID string) error {
 	return err
 }
 
+func UpdateQueue(db *sql.DB, taskID string) error {
+	_, err := db.Exec("UPDATE queue SET queued = TRUE WHERE task_id = ?", taskID)
+	return err
+}
+
 func GetTaskFromQueue(db *sql.DB) (models.Task, error) {
 	var taskID string
-	err := db.QueryRow("SELECT task_id FROM queue ORDER BY created_at ASC LIMIT 1").Scan(&taskID)
+	err := db.QueryRow("SELECT task_id FROM queue WHERE queued = FALSE ORDER BY created_at ASC LIMIT 1").Scan(&taskID)
 	if err != nil {
 		return models.Task{}, err
 	}
@@ -513,4 +521,49 @@ func GetPeonForTask(db *sql.DB, queue string) (models.Peon, error) {
 	}
 
 	return GetPeonByID(db, peonID)
+}
+
+func CleanInconsistencies(db *sql.DB) error {
+	_, err := db.Exec(CleanPeons())
+	if err != nil {
+		return fmt.Errorf("failed to clean peons: %w", err)
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to start transaction: %w", err)
+	}
+
+	defer tx.Rollback()
+	rows, err := tx.Query(CleanBountyboard())
+	if err == sql.ErrNoRows {
+		return nil
+	} else {
+		slog.Error("Failed to find inconsistent tasks", "err", err)
+	}
+
+	defer rows.Close()
+	for rows.Next() {
+		var taskID string
+		err := rows.Scan(&taskID)
+		if err != nil {
+			slog.Error("Failed to extract ID into string", "err", err)
+		}
+		updateQuery := `UPDATE bountyboard SET status = 'PENDING', peon_id = NULL WHERE id = ?`
+		_, err = tx.Exec(updateQuery, taskID)
+		if err != nil {
+			slog.Error("Failed to update taskID back to PENDING after worker went offline: ", "err", err)
+		}
+
+		_, err = db.Exec("INSERT INTO queue (task_id) VALUES (?)", taskID)
+		if err != nil {
+			return fmt.Errorf("failed to insert into queue: %w", err)
+		}
+	}
+	err = tx.Commit()
+	if err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
 }

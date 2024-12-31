@@ -54,12 +54,13 @@ type TaskAcknowledgement struct {
 type TaskStatus string
 
 const (
-	TaskStatusPending   TaskStatus = "PENDING"
-	TaskStatusRunning   TaskStatus = "RUNNING"
-	TaskStatusSuccess   TaskStatus = "SUCCESS"
-	TaskStatusFailure   TaskStatus = "FAILURE"
-	TaskStatusInvalid   TaskStatus = "INVALID"
-	TaskStatusCancelled TaskStatus = "CANCELLED"
+	TaskStatusPending      TaskStatus = "PENDING"
+	TaskStatusRunning      TaskStatus = "RUNNING"
+	TaskStatusSuccess      TaskStatus = "SUCCESS"
+	TaskStatusFailure      TaskStatus = "FAILURE"
+	TaskStatusInvalid      TaskStatus = "INVALID"
+	TaskStatusCancelled    TaskStatus = "CANCELLED"
+	TaskStatusAcknowledged TaskStatus = "ACKNOWLEDGED"
 )
 
 type TaskPayload struct {

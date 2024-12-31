@@ -15,7 +15,6 @@ import (
 
 	"github.com/Artur-Galstyan/workcraft-stronghold/events"
 	"github.com/Artur-Galstyan/workcraft-stronghold/handlers"
-	"github.com/Artur-Galstyan/workcraft-stronghold/models"
 	"github.com/Artur-Galstyan/workcraft-stronghold/sqls"
 	"github.com/Artur-Galstyan/workcraft-stronghold/views"
 	"github.com/a-h/templ"
@@ -69,44 +68,12 @@ func setupCronJobs(db *sql.DB) {
 		cronMutex.Lock()
 		defer cronMutex.Unlock()
 
-		tx, err := db.Begin()
+		err := sqls.CleanInconsistencies(db)
 		if err != nil {
-			slog.Error("Failed to start transaction", "err", err)
+			slog.Error("Failed to clean up inconsistencies", "err", err)
 			return
 		}
 
-		defer tx.Rollback()
-		rows, err := tx.Query(sqls.CleanBountyboard())
-		if err == sql.ErrNoRows {
-			return
-		}
-		if err != nil {
-			slog.Error("Failed to find inconsistent tasks", "err", err)
-		}
-		defer rows.Close()
-		i := 0
-		for rows.Next() {
-			var taskID string
-			err := rows.Scan(&taskID)
-			if err != nil {
-				slog.Error("Failed to extract ID into string", "err", err)
-			}
-			updateQuery := `UPDATE bountyboard SET status = 'PENDING', peon_id = NULL WHERE id = ?`
-			_, err = tx.Exec(updateQuery, taskID)
-			if err != nil {
-				slog.Error("Failed to update taskID back to PENDING after worker went offline: ", "err", err)
-			}
-			i++
-		}
-		err = tx.Commit()
-		if err != nil {
-			slog.Error("Failed to commit transaction", "err", err)
-			return
-		}
-
-		if i > 0 {
-			slog.Info("Reset tasks: ", "count", i)
-		}
 	})
 
 	c.Start()
@@ -146,28 +113,27 @@ func sendPendingTasks(db *sql.DB, eventSender *events.EventSender) {
 		return
 	}
 	msgString := fmt.Sprintf("{\"type\": \"%s\", \"data\": %s}", "new_task", string(taskJSON))
-
 	eventSender.SendEvent(idlePeon.ID, msgString)
 
-	status := "RUNNING"
-	_, err = sqls.UpdateTask(db, task.ID, models.TaskUpdate{Status: &status, PeonId: &idlePeon.ID})
-	if err != nil {
-		slog.Error("Failed to update task status to RUNNING", "err", err)
-		return
-	}
+	// status := "RUNNING"
+	// _, err = sqls.UpdateTask(db, task.ID, models.TaskUpdate{Status: &status, PeonId: &idlePeon.ID})
+	// if err != nil {
+	// 	slog.Error("Failed to update task status to RUNNING", "err", err)
+	// 	return
+	// }
 
-	status = "WORKING"
-	_, err = sqls.UpdatePeon(db, idlePeon.ID, models.PeonUpdate{Status: &status, CurrentTask: &task.ID})
-	if err != nil {
-		slog.Error("Failed to update peon status to WORKING", "err", err)
-		return
-	}
+	// status = "WORKING"
+	// _, err = sqls.UpdatePeon(db, idlePeon.ID, models.PeonUpdate{Status: &status, CurrentTask: &task.ID})
+	// if err != nil {
+	// 	slog.Error("Failed to update peon status to WORKING", "err", err)
+	// 	return
+	// }
 
-	slog.Info("Sent task to peon", "task_id", task.ID, "peon_id", idlePeon.ID)
+	// slog.Info("Sent task to peon", "task_id", task.ID, "peon_id", idlePeon.ID)
 
-	err = sqls.DeleteTaskFromQueue(db, task.ID)
+	err = sqls.UpdateQueue(db, task.ID)
 	if err != nil {
-		slog.Error("Failed to delete task from queue", "err", err)
+		slog.Error("Failed to update task from queue", "err", err)
 		return
 	}
 
@@ -234,7 +200,6 @@ func main() {
 	http.HandleFunc("GET /api/task/{id}", handlers.AuthMiddleware(handlers.CreateGetTaskHandler(db), hashedApiKey))
 	http.HandleFunc("POST /api/task/{id}/cancel", handlers.AuthMiddleware(handlers.CreateCancelTaskHandler(db), hashedApiKey))
 	http.HandleFunc("POST /api/task/{id}/update", handlers.AuthMiddleware(handlers.CreateTaskUpdateHandler(db), hashedApiKey))
-	http.HandleFunc("POST /api/task/{id}/acknowledgement", handlers.AuthMiddleware(handlers.CreatePostTaskAcknowledgementHandler(db), hashedApiKey))
 	http.HandleFunc("GET /api/test", handlers.AuthMiddleware(createTestHandler(eventSender), hashedApiKey))
 	http.HandleFunc("/events", handlers.CreateSSEHandler(eventSender, db))
 

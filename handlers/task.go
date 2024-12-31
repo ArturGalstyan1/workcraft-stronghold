@@ -174,36 +174,6 @@ func CreateTaskUpdateHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-func CreatePostTaskAcknowledgementHandler(db *sql.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		taskID := r.PathValue("id")
-		if taskID == "" {
-			slog.Error("Task ID is required")
-			http.Error(w, "Task ID is required", http.StatusBadRequest)
-			return
-		}
-		slog.Info("Received acknowledge for ", "id", taskID)
-
-		var t models.TaskAcknowledgement
-		err := json.NewDecoder(r.Body).Decode(&t)
-		if err != nil {
-			slog.Error("Failed to decode request body", "err", err)
-			http.Error(w, "Invalid request body", http.StatusBadRequest)
-			return
-		}
-
-		_, err = db.Exec("UPDATE bountyboard SET status = 'RUNNING', peon_id = ? WHERE id = ?", t.PeonID, taskID)
-		if err != nil {
-			slog.Error("Failed to update task status", "err", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
-		}
-
-		w.WriteHeader(http.StatusNoContent)
-
-	}
-}
-
 func CreatePostTaskHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		slog.Info("Received new task!")

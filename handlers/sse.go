@@ -75,6 +75,12 @@ func CreateSSEHandler(eventSender *events.EventSender, db *sql.DB) http.HandlerF
 						slog.Error("Failed to mark peon offline", "err", err)
 						return
 					}
+
+					err = sqls.CleanInconsistencies(db)
+					if err != nil {
+						slog.Error("Failed to clean inconsistencies", "err", err)
+						return
+					}
 				}
 				return
 			case <-ticker.C:
