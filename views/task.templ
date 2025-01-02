@@ -10,36 +10,23 @@ templ Task(task models.Task) {
 	@layout.Base() {
 		@templ.JSONScript("taskID", task.ID)
 		<script defer>
-            let socket = null;
             const taskID = JSON.parse(document.getElementById('taskID').innerText);
             console.log('Task ID:', taskID);
+            const sse = window.getSSE();
+            sse.onopen = function() {
+                console.log('Connected');
+            };
 
-            function keepReconnecting() {
-                if (socket === null) {
-                    console.log('No socket, reconnecting');
-                    socket = window.getWebsocket();
-
-                    socket.onopen = function() {
-                        console.log('Connected');
-                    };
-
-                    socket.onmessage = function(e) {
-                        const data = JSON.parse(e.data);
-                        if (data.type === 'task_update' && data.message.task.id === taskID) {
-                            updateTask(data.message.task);
-                        }
-                    };
-
-                    socket.onerror = function(error) {
-                        console.error('WebSocket error:', error);
-                    };
-
-                    socket.onclose = function(e) {
-                        console.log('Disconnected:', e.code, e.reason);
-                        socket = null;
-                    };
+            sse.onmessage = function(e) {
+                const data = JSON.parse(e.data);
+                if (data.type === 'task_update' && data.message.task.id === taskID) {
+                    updateTask(data.message.task);
                 }
-            }
+            };
+
+            sse.onerror = function(error) {
+                console.error('WebSocket error:', error);
+            };
 
             function updateTask(task) {
                 // Update status with color coding
@@ -120,8 +107,6 @@ templ Task(task models.Task) {
             $(document).ready(function() {
                 console.log('Document ready');
                 pollTaskData();
-
-                setInterval(keepReconnecting, 1000);
                 setInterval(pollTaskData, 5000);
             });
 

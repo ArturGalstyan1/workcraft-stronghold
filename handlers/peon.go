@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/Artur-Galstyan/workcraft-stronghold/events"
 	"github.com/Artur-Galstyan/workcraft-stronghold/models"
 	"github.com/Artur-Galstyan/workcraft-stronghold/sqls"
 	"github.com/Artur-Galstyan/workcraft-stronghold/utils"
@@ -153,7 +154,7 @@ func CreateGetPeonTaskHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-func CreateUpdatePeonHandler(db *sql.DB) http.HandlerFunc {
+func CreateUpdatePeonHandler(db *sql.DB, eventSender *events.EventSender) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		peonID := r.PathValue("id")
 		var update models.PeonUpdate
@@ -178,12 +179,16 @@ func CreateUpdatePeonHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		fmt.Sprintf(`{"type": "peon_update", "message": {"peon": %s}}`,
+		msg := fmt.Sprintf(`{"type": "peon_update", "message": {"peon": %s}}`,
 			string(peonJSON))
-		// slog.Info(msg)
-		// TODO: Notify Chieftain
+		eventSender.BroadcastToChieftains(msg)
 
-		w.WriteHeader(http.StatusNoContent)
+		w.Header().Set("Content-Type", "application/json")
+		err = json.NewEncoder(w).Encode(updatedPeon)
+		if err != nil {
+			slog.Error("Failed to encode updated peon", "err", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
 	}
 }
 

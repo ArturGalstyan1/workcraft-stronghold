@@ -23,7 +23,7 @@ type PeonUpdate struct {
 type TaskUpdate struct {
 	Status         *string      `db:"status"`
 	TaskName       *string      `db:"task_name"`
-	PeonId         *string      `db:"peon_id"`
+	PeonID         *string      `db:"peon_id"`
 	Queue          *string      `db:"queue"`
 	Payload        *interface{} `db:"payload"`
 	Result         *string      `db:"result"`
@@ -78,7 +78,7 @@ type Task struct {
 	Status         TaskStatus  `json:"status"`
 	CreatedAt      time.Time   `json:"created_at"`
 	UpdatedAt      time.Time   `json:"updated_at"`
-	PeonId         *string     `json:"peon_id"`
+	PeonID         *string     `json:"peon_id"`
 	Queue          string      `json:"queue"`
 	Payload        TaskPayload `json:"payload"`
 	Result         interface{} `json:"result"`
@@ -141,7 +141,7 @@ type TaskFilter struct {
 	CreatedAt *FilterCondition `json:"created_at,omitempty"`
 	TaskName  *FilterCondition `json:"task_name,omitempty"`
 	Queue     *FilterCondition `json:"queue,omitempty"`
-	PeonId    *FilterCondition `json:"peon_id,omitempty"`
+	PeonID    *FilterCondition `json:"peon_id,omitempty"`
 }
 
 type PeonFilter struct {

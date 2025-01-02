@@ -37,6 +37,19 @@ func GetAnyOnlinePeon() string {
 	`
 }
 
+func GetPendingTaskIDs() string {
+	return `
+	SELECT id
+	FROM bountyboard
+	WHERE status = 'PENDING'
+	   OR (status = 'FAILURE'
+	       AND retry_on_failure = TRUE
+	       AND retry_count < retry_limit
+	       AND updated_at < datetime('now', '-1 minutes'))
+	ORDER BY created_at ASC
+	LIMIT 10`
+}
+
 func GetPendingTasks() string {
 	return `
 	SELECT id, task_name, queue, payload, retry_count, retry_limit, retry_on_failure
@@ -220,7 +233,7 @@ func GetTasksByPeonID(db *sql.DB, peonID string) ([]models.Task, error) {
 		var task models.Task
 		var payloadJSON string
 
-		err := rows.Scan(&task.ID, &task.Status, &task.CreatedAt, &task.UpdatedAt, &task.TaskName, &task.PeonId, &task.Queue, &payloadJSON, &task.Result, &task.RetryOnFailure, &task.RetryCount, &task.RetryLimit)
+		err := rows.Scan(&task.ID, &task.Status, &task.CreatedAt, &task.UpdatedAt, &task.TaskName, &task.PeonID, &task.Queue, &payloadJSON, &task.Result, &task.RetryOnFailure, &task.RetryCount, &task.RetryLimit)
 
 		if err != nil {
 			return nil, err
@@ -464,7 +477,7 @@ func GetTaskByID(db *sql.DB, taskID string) (models.Task, error) {
 		"SELECT * FROM bountyboard WHERE id = ?",
 		taskID,
 	).Scan(
-		&task.ID, &task.Status, &task.CreatedAt, &task.UpdatedAt, &task.TaskName, &task.PeonId, &task.Queue, &payloadJSON, &task.Result, &task.RetryOnFailure, &task.RetryCount, &task.RetryLimit,
+		&task.ID, &task.Status, &task.CreatedAt, &task.UpdatedAt, &task.TaskName, &task.PeonID, &task.Queue, &payloadJSON, &task.Result, &task.RetryOnFailure, &task.RetryCount, &task.RetryLimit,
 	)
 
 	if err != nil {
@@ -502,6 +515,40 @@ func DeleteTaskFromQueue(db *sql.DB, taskID string) error {
 func UpdateQueue(db *sql.DB, taskID string) error {
 	_, err := db.Exec("UPDATE queue SET queued = TRUE WHERE task_id = ?", taskID)
 	return err
+}
+
+func PutPendingTasksIntoQueue(db *sql.DB) error {
+	rows, err := db.Query(GetPendingTaskIDs())
+
+	if err != nil {
+		return fmt.Errorf("failed to get pending tasks: %w", err)
+	}
+
+	// iterate over the rows
+	var tasks []string
+	for rows.Next() {
+		var taskID string
+
+		err := rows.Scan(&taskID)
+		if err != nil {
+			return fmt.Errorf("failed to scan task: %w", err)
+		}
+
+		tasks = append(tasks, taskID)
+	}
+
+	if len(tasks) == 0 {
+		return nil
+	}
+
+	for _, taskID := range tasks {
+		_, err := db.Exec("INSERT INTO queue (task_id) VALUES (?)", taskID)
+		if err != nil {
+			return fmt.Errorf("failed to insert into queue: %w", err)
+		}
+	}
+
+	return nil
 }
 
 func GetTaskFromQueue(db *sql.DB) (models.Task, error) {

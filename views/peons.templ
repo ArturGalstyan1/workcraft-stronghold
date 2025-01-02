@@ -5,34 +5,29 @@ import "github.com/Artur-Galstyan/workcraft-stronghold/views/layout"
 templ Peons() {
 	@layout.Base() {
 		<script defer>
-        let socket = null;
         let totalPages = 0;
         let currentPage = 0;
 
-        function keepReconnecting() {
-            if (socket === null) {
-                console.log('No socket, reconnecting');
-                socket = window.getWebsocket();
-                socket.onopen = function() {
-                    console.log('Connected');
-                    reconnectAttempts = 0;
-                };
-                socket.onmessage = function(e) {
-                    const data = JSON.parse(e.data);
-                    if (data.type === 'peon_update') {
-                        // Update single row in the table
-                        updatePeonRow(data.message.peon);
-                    }
-                };
-                socket.onerror = function(error) {
-                    console.error('WebSocket error:', error);
-                };
-                socket.onclose = function(e) {
-                    console.log('Disconnected:', e.code, e.reason);
-                    socket = null;
-                };
+        const sse = window.getSSE();
+
+        console.log('No SSE, reconnecting');
+
+        sse.onopen = function() {
+            console.log('Connected');
+        };
+
+        sse.onmessage = function(e) {
+            console.log(e)
+            const data = JSON.parse(e.data);
+            if (data.type === 'peon_update') {
+                // Update single row in the table
+                updatePeonRow(data.message.peon);
             }
-        }
+        };
+        sse.onerror = function(error) {
+            console.error('WebSocket error:', error);
+        };
+
 
         function updatePeonRow(peon) {
             const row = document.getElementById(`peon-${peon.id}`);
@@ -212,7 +207,6 @@ templ Peons() {
         $(document).ready(async function() {
             console.log('Document ready');
             await pollPeonData();
-            setInterval(keepReconnecting, 1000);
             setInterval(pollPeonData, 5000);
         });
 

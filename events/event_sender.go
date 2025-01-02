@@ -65,7 +65,11 @@ func (s *EventSender) BroadcastToChieftains(msg string) {
 				slog.Error("Failed to write to writer", "err", err)
 				continue
 			}
-			rc.Flush()
+			err = rc.Flush()
+			if err != nil {
+				slog.Error("Failed to flush writer", "err", err)
+				continue
+			}
 		}
 	}
 }

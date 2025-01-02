@@ -208,9 +208,9 @@ func BuildTaskQuery(filter *models.TaskFilter) (string, []interface{}, error) {
 		args = append(args, filter.Queue.Value)
 	}
 
-	if filter.PeonId != nil {
+	if filter.PeonID != nil {
 		query += " AND peon_id = ?"
-		args = append(args, filter.PeonId.Value)
+		args = append(args, filter.PeonID.Value)
 	}
 
 	return query, args, nil
@@ -345,10 +345,10 @@ func ParsePeonQuery(queryJSON string) (*models.PeonQuery, error) {
 }
 
 func GenerateUUID() string {
-    b := make([]byte, 16)
-    _, err := rand.Read(b)
-    if err != nil {
-        return ""
-    }
-    return hex.EncodeToString(b)
+	b := make([]byte, 16)
+	_, err := rand.Read(b)
+	if err != nil {
+		return ""
+	}
+	return hex.EncodeToString(b)
 }

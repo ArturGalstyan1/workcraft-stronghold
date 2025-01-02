@@ -114,29 +114,19 @@ func sendPendingTasks(db *sql.DB, eventSender *events.EventSender) {
 	}
 	msgString := fmt.Sprintf("{\"type\": \"%s\", \"data\": %s}", "new_task", string(taskJSON))
 	eventSender.SendEvent(idlePeon.ID, msgString)
-
-	// status := "RUNNING"
-	// _, err = sqls.UpdateTask(db, task.ID, models.TaskUpdate{Status: &status, PeonId: &idlePeon.ID})
-	// if err != nil {
-	// 	slog.Error("Failed to update task status to RUNNING", "err", err)
-	// 	return
-	// }
-
-	// status = "WORKING"
-	// _, err = sqls.UpdatePeon(db, idlePeon.ID, models.PeonUpdate{Status: &status, CurrentTask: &task.ID})
-	// if err != nil {
-	// 	slog.Error("Failed to update peon status to WORKING", "err", err)
-	// 	return
-	// }
-
-	// slog.Info("Sent task to peon", "task_id", task.ID, "peon_id", idlePeon.ID)
-
 	err = sqls.UpdateQueue(db, task.ID)
 	if err != nil {
 		slog.Error("Failed to update task from queue", "err", err)
 		return
 	}
 
+}
+
+func putPendingTasksIntoQueue(db *sql.DB) {
+	err := sqls.PutPendingTasksIntoQueue(db)
+	if err != nil {
+		slog.Error("Failed to put pending tasks into queue", "err", err)
+	}
 }
 
 func sendPendingTasksInterval(db *sql.DB, eventSender *events.EventSender) {
@@ -146,10 +136,10 @@ func sendPendingTasksInterval(db *sql.DB, eventSender *events.EventSender) {
 	for {
 		select {
 		case <-ticker.C:
+			putPendingTasksIntoQueue(db)
 			sendPendingTasks(db, eventSender)
 		}
 	}
-
 }
 
 func main() {
@@ -192,16 +182,16 @@ func main() {
 	http.HandleFunc("GET /api/peons", handlers.AuthMiddleware(handlers.CreateGetPeonsHandler(db), hashedApiKey))
 	http.HandleFunc("GET /api/peon/{id}", handlers.AuthMiddleware(handlers.CreateGetPeonHandler(db), hashedApiKey))
 	http.HandleFunc("GET /api/peon/{id}/tasks", handlers.AuthMiddleware(handlers.CreateGetPeonTaskHandler(db), hashedApiKey))
-	http.HandleFunc("POST /api/peon/{id}/update", handlers.AuthMiddleware(handlers.CreateUpdatePeonHandler(db), hashedApiKey))
+	http.HandleFunc("POST /api/peon/{id}/update", handlers.AuthMiddleware(handlers.CreateUpdatePeonHandler(db, eventSender), hashedApiKey))
 	http.HandleFunc("POST /api/peon/{id}/statistics", handlers.AuthMiddleware(handlers.CreatePostStatisticsHandler(db), hashedApiKey))
 
 	http.HandleFunc("POST /api/task", handlers.AuthMiddleware(handlers.CreatePostTaskHandler(db), hashedApiKey))
 	http.HandleFunc("GET /api/tasks", handlers.AuthMiddleware(handlers.CreateGetTasksHandler(db), hashedApiKey))
 	http.HandleFunc("GET /api/task/{id}", handlers.AuthMiddleware(handlers.CreateGetTaskHandler(db), hashedApiKey))
-	http.HandleFunc("POST /api/task/{id}/cancel", handlers.AuthMiddleware(handlers.CreateCancelTaskHandler(db), hashedApiKey))
-	http.HandleFunc("POST /api/task/{id}/update", handlers.AuthMiddleware(handlers.CreateTaskUpdateHandler(db), hashedApiKey))
+	http.HandleFunc("POST /api/task/{id}/cancel", handlers.AuthMiddleware(handlers.CreateCancelTaskHandler(db, eventSender), hashedApiKey))
+	http.HandleFunc("POST /api/task/{id}/update", handlers.AuthMiddleware(handlers.CreateTaskUpdateHandler(db, eventSender), hashedApiKey))
 	http.HandleFunc("GET /api/test", handlers.AuthMiddleware(createTestHandler(eventSender), hashedApiKey))
-	http.HandleFunc("/events", handlers.CreateSSEHandler(eventSender, db))
+	http.HandleFunc("/events", handlers.AuthMiddleware(handlers.CreateSSEHandler(eventSender, db), hashedApiKey))
 
 	go sendPendingTasksInterval(db, eventSender)
 

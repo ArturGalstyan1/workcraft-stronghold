@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/Artur-Galstyan/workcraft-stronghold/events"
 	"github.com/Artur-Galstyan/workcraft-stronghold/models"
 	"github.com/Artur-Galstyan/workcraft-stronghold/sqls"
 	"github.com/Artur-Galstyan/workcraft-stronghold/utils"
@@ -33,7 +34,7 @@ func CreateTaskViewHandler(db *sql.DB) http.HandlerFunc {
                    retry_count, retry_limit
             FROM bountyboard WHERE id = ?`, taskID).Scan(
 			&task.ID, &task.Status, &task.CreatedAt, &task.UpdatedAt,
-			&task.TaskName, &task.PeonId, &task.Queue, &payloadJSON,
+			&task.TaskName, &task.PeonID, &task.Queue, &payloadJSON,
 			&task.Result, &task.RetryOnFailure, &task.RetryCount, &task.RetryLimit)
 		if err == sql.ErrNoRows {
 			http.Error(w, "Task not found", http.StatusNotFound)
@@ -62,7 +63,7 @@ func TaskView(w http.ResponseWriter, r *http.Request) {
 	templ.Handler(component).ServeHTTP(w, r)
 }
 
-func CreateTaskUpdateHandler(db *sql.DB) http.HandlerFunc {
+func CreateTaskUpdateHandler(db *sql.DB, eventSender *events.EventSender) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		taskID := r.PathValue("id")
 		if taskID == "" {
@@ -148,7 +149,7 @@ func CreateTaskUpdateHandler(db *sql.DB) http.HandlerFunc {
                    retry_count, retry_limit
             FROM bountyboard WHERE id = ?`, taskID).Scan(
 			&updatedTask.ID, &updatedTask.Status, &updatedTask.CreatedAt,
-			&updatedTask.UpdatedAt, &updatedTask.TaskName, &updatedTask.PeonId,
+			&updatedTask.UpdatedAt, &updatedTask.TaskName, &updatedTask.PeonID,
 			&updatedTask.Queue, &payloadJSON, &updatedTask.Result,
 			&updatedTask.RetryOnFailure, &updatedTask.RetryCount, &updatedTask.RetryLimit)
 
@@ -163,9 +164,9 @@ func CreateTaskUpdateHandler(db *sql.DB) http.HandlerFunc {
 				if err != nil {
 					slog.Error("Failed to serialize updated task", "err", err)
 				} else {
-					fmt.Sprintf(`{"type": "task_update", "message": {"task": %s}}`,
+					msg := fmt.Sprintf(`{"type": "task_update", "message": {"task": %s}}`,
 						string(taskJSON))
-					// TODO: Notify Chieftain
+					eventSender.BroadcastToChieftains(msg)
 				}
 			}
 		}
@@ -252,7 +253,7 @@ func CreateGetTasksHandler(db *sql.DB) http.HandlerFunc {
 			var task models.Task
 			var payloadJSON string
 			err := rows.Scan(&task.ID, &task.Status, &task.CreatedAt, &task.UpdatedAt,
-				&task.TaskName, &task.PeonId, &task.Queue, &payloadJSON,
+				&task.TaskName, &task.PeonID, &task.Queue, &payloadJSON,
 				&task.Result, &task.RetryOnFailure, &task.RetryCount, &task.RetryLimit)
 			if err != nil {
 				slog.Error("Error scanning task", "err", err)
@@ -322,7 +323,7 @@ func CreateGetTaskHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-func CreateCancelTaskHandler(db *sql.DB) http.HandlerFunc {
+func CreateCancelTaskHandler(db *sql.DB, eventSender *events.EventSender) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		slog.Info("POST /api/task/{id}/cancel")
 		taskID := r.PathValue("id")
@@ -350,20 +351,10 @@ func CreateCancelTaskHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		// data := map[string]interface{}{
-		// 	"type":    "cancel_task",
-		// 	"message": taskID,
-		// }
+		msg := fmt.Sprintf(`{"type": "cancel_task", "data": "%s"}`,
+			taskID)
+		err = eventSender.SendEvent(*task.PeonID, msg)
 
-		// bytes, err := json.Marshal(data)
-
-		if err != nil {
-			slog.Error("Failed to marshal cancel message", "err", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
-		}
-
-		// TODO: Send cancel SSE
 		if err != nil {
 			slog.Error("Failed to send cancel message", "err", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
