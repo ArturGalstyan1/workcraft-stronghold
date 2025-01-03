@@ -2,26 +2,57 @@ package models
 
 import (
 	"encoding/json"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
+type BaseModel struct {
+	ID        string     `gorm:"primarykey;type:string" json:"id"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
+	DeletedAt *time.Time `gorm:"index" json:"deleted_at,omitempty"`
+}
+
 type Queue struct {
-	gorm.Model
-	TaskID uint `json:"task_id" gorm:"not null;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
-	Task   Task `gorm:"foreignKey:TaskID"`
-	Queued bool `json:"queued" gorm:"default:false"`
+	BaseModel
+	TaskID string `json:"task_id" gorm:"not null;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+	Task   Task   `gorm:"foreignKey:TaskID"`
+	Queued bool   `json:"queued" gorm:"default:false"`
+}
+
+type Task struct {
+	BaseModel
+	TaskName       string      `json:"task_name"`
+	Status         TaskStatus  `json:"status"`
+	PeonID         *string     `json:"peon_id" gorm:"type:uuid"`
+	Queue          string      `json:"queue"`
+	PayloadStr     string      `json:"-" gorm:"column:payload;type:text"`
+	ResultStr      string      `json:"-" gorm:"column:result;type:text"`
+	RetryOnFailure bool        `json:"retry_on_failure"`
+	RetryCount     int         `json:"retry_count"`
+	RetryLimit     int         `json:"retry_limit"`
+	Payload        TaskPayload `json:"payload" gorm:"-"`
+	Result         interface{} `json:"result" gorm:"-"`
 }
 
 type Stats struct {
-	gorm.Model
-	Type     string  `json:"type"`
-	ValueStr string  `json:"value" gorm:"column:value;type:text"` // For DB storage
-	PeonID   *string `json:"peon_id"`
-	TaskID   *string `json:"task_id"`
+	BaseModel
+	Type     string      `json:"type"`
+	ValueStr string      `json:"-" gorm:"column:value;type:text"` // Hide from JSON
+	PeonID   *string     `json:"peon_id" gorm:"type:uuid"`
+	TaskID   *string     `json:"task_id" gorm:"type:uuid"`
+	Value    interface{} `json:"value" gorm:"-"` // Use this for JSON
+}
 
-	Value interface{} `gorm:"-" json:"-"` // Ignore for DB operations
+type Peon struct {
+	BaseModel
+	Status        string  `json:"status"`
+	LastHeartbeat string  `json:"last_heartbeat"`
+	CurrentTask   *string `json:"current_task" gorm:"type:uuid"`
+	Queues        *string `json:"queues"`
 }
 
 type PeonUpdate struct {
@@ -81,29 +112,6 @@ type TaskPayload struct {
 	PrerunHandlerKwargs  map[string]interface{} `json:"prerun_handler_kwargs"`
 	PostrunHandlerArgs   []interface{}          `json:"postrun_handler_args"`
 	PostrunHandlerKwargs map[string]interface{} `json:"postrun_handler_kwargs"`
-}
-
-type Task struct {
-	gorm.Model
-	TaskName       string      `json:"task_name"`
-	Status         TaskStatus  `json:"status"`
-	PeonID         *string     `json:"peon_id"`
-	Queue          string      `json:"queue"`
-	PayloadStr     string      `json:"-" gorm:"column:payload;type:text"` // Hide from JSON
-	ResultStr      string      `json:"-" gorm:"column:result;type:text"`  // Hide from JSON
-	RetryOnFailure bool        `json:"retry_on_failure"`
-	RetryCount     int         `json:"retry_count"`
-	RetryLimit     int         `json:"retry_limit"`
-	Payload        TaskPayload `json:"payload" gorm:"-"` // Use this for JSON
-	Result         interface{} `json:"result" gorm:"-"`  // Use this for JSON
-}
-
-type Peon struct {
-	gorm.Model
-	Status        string  `json:"status"`
-	LastHeartbeat string  `json:"last_heartbeat"`
-	CurrentTask   *string `json:"current_task"`
-	Queues        *string `json:"queues"`
 }
 
 type FilterOperator string
@@ -239,6 +247,13 @@ func (s *Stats) AfterFind(tx *gorm.DB) error {
 			return err
 		}
 		s.Value = value
+	}
+	return nil
+}
+
+func (base *BaseModel) BeforeCreate(tx *gorm.DB) error {
+	if base.ID == "" {
+		base.ID = uuid.New().String()
 	}
 	return nil
 }

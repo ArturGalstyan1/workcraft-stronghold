@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"database/sql"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -9,11 +8,11 @@ import (
 
 	"github.com/Artur-Galstyan/workcraft-stronghold/events"
 	"github.com/Artur-Galstyan/workcraft-stronghold/models"
-	"github.com/Artur-Galstyan/workcraft-stronghold/sqls"
 	"github.com/Artur-Galstyan/workcraft-stronghold/utils"
+	"gorm.io/gorm"
 )
 
-func CreateSSEHandler(eventSender *events.EventSender, db *sql.DB) http.HandlerFunc {
+func CreateSSEHandler(eventSender *events.EventSender, db *gorm.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		connectionType := r.URL.Query().Get("type")
 		if connectionType == "" {
@@ -24,11 +23,13 @@ func CreateSSEHandler(eventSender *events.EventSender, db *sql.DB) http.HandlerF
 			http.Error(w, "Invalid type provided", http.StatusBadRequest)
 			return
 		}
+
 		peonID := r.URL.Query().Get("peon_id")
 		if peonID == "" && connectionType == "peon" {
 			http.Error(w, "No peon_id provided", http.StatusBadRequest)
 			return
 		}
+
 		queues := r.URL.Query().Get("queues")
 		if queues == "" && connectionType == "peon" {
 			http.Error(w, "No queues provided", http.StatusBadRequest)
@@ -37,12 +38,22 @@ func CreateSSEHandler(eventSender *events.EventSender, db *sql.DB) http.HandlerF
 
 		rc := http.NewResponseController(w)
 		var connectionID string
+
 		if connectionType == "peon" {
 			slog.Info("Peon connected", "peon_id", peonID)
 			connectionID = peonID
-			err := sqls.InsertPeonIntoDb(db, peonID, queues)
-			if err != nil {
-				slog.Error("Failed to insert peon into db", "err", err)
+
+			peon := models.Peon{
+				Status: "IDLE",
+				Queues: &queues,
+			}
+			peon.ID = peonID // Set ID explicitly since we have it
+
+			result := db.Where(models.Peon{BaseModel: models.BaseModel{ID: peonID}}).
+				FirstOrCreate(&peon)
+
+			if result.Error != nil {
+				slog.Error("Failed to insert/update peon in db", "err", result.Error)
 				http.Error(w, "Failed to insert peon into db", http.StatusInternalServerError)
 				return
 			}
@@ -61,8 +72,7 @@ func CreateSSEHandler(eventSender *events.EventSender, db *sql.DB) http.HandlerF
 		defer ticker.Stop()
 
 		connectedJSON := fmt.Sprintf("{\"type\": \"connected\", \"connection_id\": \"%s\"}", connectionID)
-		err := eventSender.SendEvent(connectionID, connectedJSON)
-		if err != nil {
+		if err := eventSender.SendEvent(connectionID, connectedJSON); err != nil {
 			slog.Error("Failed to send connected event", "err", err)
 			return
 		}
@@ -73,17 +83,18 @@ func CreateSSEHandler(eventSender *events.EventSender, db *sql.DB) http.HandlerF
 			case <-connClosed:
 				if connectionType == "peon" {
 					slog.Info("Peon disconnected", "peon_id", peonID)
-					status := "OFFLINE"
-					_, err := sqls.UpdatePeon(db, peonID, models.PeonUpdate{
-						Status: &status,
-					})
-					if err != nil {
-						slog.Error("Failed to mark peon offline", "err", err)
+
+					offlineStatus := "OFFLINE"
+					result := db.Model(&models.Peon{}).
+						Where("id = ?", peonID).
+						Update("status", offlineStatus)
+
+					if result.Error != nil {
+						slog.Error("Failed to mark peon offline", "err", result.Error)
 						return
 					}
 
-					err = sqls.CleanInconsistencies(db)
-					if err != nil {
+					if err := utils.CleanInconsistencies(db); err != nil {
 						slog.Error("Failed to clean inconsistencies", "err", err)
 						return
 					}
