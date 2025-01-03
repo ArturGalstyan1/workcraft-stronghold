@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Artur-Galstyan/workcraft-stronghold/models"
+	"gorm.io/gorm"
 )
 
 func GetIdlePeons() string {
@@ -323,16 +324,7 @@ func UpdatePeon(db *sql.DB, peonID string, updates models.PeonUpdate) (models.Pe
 	return GetPeonByID(db, peonID)
 }
 
-func CreateTask(db *sql.DB, task models.Task) error {
-	payloadJSON, err := json.Marshal(task.Payload)
-	if err != nil {
-		return fmt.Errorf("failed to marshal payload: %w", err)
-	}
-
-	// Validate required fields
-	if task.ID == "" {
-		return fmt.Errorf("task ID is required")
-	}
+func CreateTask(db *gorm.DB, task models.Task) error {
 	if task.TaskName == "" {
 		return fmt.Errorf("task name is required")
 	}
@@ -348,41 +340,22 @@ func CreateTask(db *sql.DB, task models.Task) error {
 		return fmt.Errorf("retry limit cannot be negative")
 	}
 
-	query := `
-        INSERT INTO bountyboard (
-            id,
-            status,
-            task_name,
-            queue,
-            payload,
-            retry_on_failure,
-            retry_limit
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)`
-
-	result, err := db.Exec(query,
-		task.ID,
-		task.Status,
-		task.TaskName,
-		task.Queue,
-		string(payloadJSON),
-		task.RetryOnFailure,
-		task.RetryLimit,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create task: %w", err)
+	result := db.Create(&task)
+	if result.Error != nil {
+		return fmt.Errorf("failed to create task: %w", result.Error)
 	}
 
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("error checking rows affected: %w", err)
-	}
-	if rows == 0 {
+	if result.RowsAffected == 0 {
 		return fmt.Errorf("no rows affected when creating task")
 	}
 
-	_, err = db.Exec("INSERT INTO queue (task_id) VALUES (?)", task.ID)
-	if err != nil {
-		return fmt.Errorf("failed to insert into queue: %w", err)
+	result = db.Create(models.Queue{
+		TaskID: task.ID,
+		Queued: true,
+	})
+
+	if result.Error != nil {
+		return fmt.Errorf("failed to create queue: %w", result.Error)
 	}
 
 	return nil

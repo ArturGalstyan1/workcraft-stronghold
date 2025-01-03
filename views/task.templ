@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"github.com/Artur-Galstyan/workcraft-stronghold/models"
 	"github.com/Artur-Galstyan/workcraft-stronghold/views/layout"
+	"strconv"
 )
 
 templ Task(task models.Task) {
@@ -138,7 +139,7 @@ templ Task(task models.Task) {
 					<div class="space-y-4">
 						<div class="flex items-center gap-2">
 							<span class="font-medium text-gray-600">ID:</span>
-							<span class="font-mono text-sm">{ task.ID }</span>
+							<span class="font-mono text-sm">{ strconv.FormatUint(uint64(task.ID), 10) }</span>
 						</div>
 						<div class="flex items-center gap-2">
 							<span class="font-medium text-gray-600">Name:</span>

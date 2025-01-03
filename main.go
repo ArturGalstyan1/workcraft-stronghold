@@ -10,9 +10,11 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
+	"github.com/Artur-Galstyan/workcraft-stronghold/database"
 	"github.com/Artur-Galstyan/workcraft-stronghold/events"
 	"github.com/Artur-Galstyan/workcraft-stronghold/handlers"
 	"github.com/Artur-Galstyan/workcraft-stronghold/sqls"
@@ -113,8 +115,9 @@ func sendPendingTasks(db *sql.DB, eventSender *events.EventSender) {
 		return
 	}
 	msgString := fmt.Sprintf("{\"type\": \"%s\", \"data\": %s}", "new_task", string(taskJSON))
-	eventSender.SendEvent(idlePeon.ID, msgString)
-	err = sqls.UpdateQueue(db, task.ID)
+	eventSender.SendEvent(strconv.FormatUint(uint64(idlePeon.ID), 10), msgString)
+	err = sqls.UpdateQueue(db, strconv.FormatUint(uint64(task.ID), 10))
+
 	if err != nil {
 		slog.Error("Failed to update task from queue", "err", err)
 		return
@@ -157,6 +160,8 @@ func main() {
 
 	eventSender := events.NewEventSender()
 
+	database.InitDB()
+
 	fs := http.FileServer(http.Dir("static"))
 	http.Handle("/static/", http.StripPrefix("/static/", fs))
 
@@ -185,7 +190,7 @@ func main() {
 	http.HandleFunc("POST /api/peon/{id}/update", handlers.AuthMiddleware(handlers.CreateUpdatePeonHandler(db, eventSender), hashedApiKey))
 	http.HandleFunc("POST /api/peon/{id}/statistics", handlers.AuthMiddleware(handlers.CreatePostStatisticsHandler(db), hashedApiKey))
 
-	http.HandleFunc("POST /api/task", handlers.AuthMiddleware(handlers.CreatePostTaskHandler(db), hashedApiKey))
+	http.HandleFunc("POST /api/task", handlers.AuthMiddleware(handlers.CreatePostTaskHandler(database.DB), hashedApiKey))
 	http.HandleFunc("GET /api/tasks", handlers.AuthMiddleware(handlers.CreateGetTasksHandler(db), hashedApiKey))
 	http.HandleFunc("GET /api/task/{id}", handlers.AuthMiddleware(handlers.CreateGetTaskHandler(db), hashedApiKey))
 	http.HandleFunc("POST /api/task/{id}/cancel", handlers.AuthMiddleware(handlers.CreateCancelTaskHandler(db, eventSender), hashedApiKey))

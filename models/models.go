@@ -1,16 +1,27 @@
 package models
 
 import (
-	"time"
+	"encoding/json"
 
 	"github.com/golang-jwt/jwt/v5"
+	"gorm.io/gorm"
 )
 
+type Queue struct {
+	gorm.Model
+	TaskID uint `json:"task_id" gorm:"not null;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+	Task   Task `gorm:"foreignKey:TaskID"`
+	Queued bool `json:"queued" gorm:"default:false"`
+}
+
 type Stats struct {
-	Type   string      `json:"type"`
-	Value  interface{} `json:"value"`
-	PeonID *string     `json:"peon_id"`
-	TaskID *string     `json:"task_id"`
+	gorm.Model
+	Type     string  `json:"type"`
+	ValueStr string  `json:"value" gorm:"column:value;type:text"` // For DB storage
+	PeonID   *string `json:"peon_id"`
+	TaskID   *string `json:"task_id"`
+
+	Value interface{} `gorm:"-" json:"-"` // Ignore for DB operations
 }
 
 type PeonUpdate struct {
@@ -73,22 +84,22 @@ type TaskPayload struct {
 }
 
 type Task struct {
-	ID             string      `json:"id"`
+	gorm.Model
 	TaskName       string      `json:"task_name"`
 	Status         TaskStatus  `json:"status"`
-	CreatedAt      time.Time   `json:"created_at"`
-	UpdatedAt      time.Time   `json:"updated_at"`
 	PeonID         *string     `json:"peon_id"`
 	Queue          string      `json:"queue"`
-	Payload        TaskPayload `json:"payload"`
-	Result         interface{} `json:"result"`
+	PayloadStr     string      `json:"-" gorm:"column:payload;type:text"` // Hide from JSON
+	ResultStr      string      `json:"-" gorm:"column:result;type:text"`  // Hide from JSON
 	RetryOnFailure bool        `json:"retry_on_failure"`
 	RetryCount     int         `json:"retry_count"`
 	RetryLimit     int         `json:"retry_limit"`
+	Payload        TaskPayload `json:"payload" gorm:"-"` // Use this for JSON
+	Result         interface{} `json:"result" gorm:"-"`  // Use this for JSON
 }
 
 type Peon struct {
-	ID            string  `json:"id"`
+	gorm.Model
 	Status        string  `json:"status"`
 	LastHeartbeat string  `json:"last_heartbeat"`
 	CurrentTask   *string `json:"current_task"`
@@ -157,4 +168,77 @@ type PaginatedResponse struct {
 	TotalItems int         `json:"total_items"`
 	TotalPages int         `json:"total_pages"`
 	Items      interface{} `json:"items"`
+}
+
+func (t *Task) BeforeSave(tx *gorm.DB) error {
+	if t.Payload.TaskKwargs == nil {
+		t.Payload.TaskKwargs = make(map[string]interface{})
+	}
+	if t.Payload.PrerunHandlerArgs == nil {
+		t.Payload.PrerunHandlerArgs = make([]interface{}, 0)
+	}
+	if t.Payload.PrerunHandlerKwargs == nil {
+		t.Payload.PrerunHandlerKwargs = make(map[string]interface{})
+	}
+	if t.Payload.PostrunHandlerArgs == nil {
+		t.Payload.PostrunHandlerArgs = make([]interface{}, 0)
+	}
+	if t.Payload.PostrunHandlerKwargs == nil {
+		t.Payload.PostrunHandlerKwargs = make(map[string]interface{})
+	}
+
+	// Now serialize to PayloadStr
+	if payload, err := json.Marshal(t.Payload); err == nil {
+		t.PayloadStr = string(payload)
+	} else {
+		return err
+	}
+
+	if t.Result != nil {
+		if result, err := json.Marshal(t.Result); err == nil {
+			t.ResultStr = string(result)
+		} else {
+			return err
+		}
+	}
+	return nil
+}
+
+func (t *Task) AfterFind(tx *gorm.DB) error {
+	var payload TaskPayload
+	if err := json.Unmarshal([]byte(t.PayloadStr), &payload); err != nil {
+		return err
+	}
+	t.Payload = payload
+
+	if t.ResultStr != "" {
+		var result interface{}
+		if err := json.Unmarshal([]byte(t.ResultStr), &result); err != nil {
+			return err
+		}
+		t.Result = result
+	}
+	return nil
+}
+
+func (s *Stats) BeforeSave(tx *gorm.DB) error {
+	if s.Value != nil {
+		if value, err := json.Marshal(s.Value); err == nil {
+			s.ValueStr = string(value)
+		} else {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Stats) AfterFind(tx *gorm.DB) error {
+	if s.ValueStr != "" {
+		var value interface{}
+		if err := json.Unmarshal([]byte(s.ValueStr), &value); err != nil {
+			return err
+		}
+		s.Value = value
+	}
+	return nil
 }

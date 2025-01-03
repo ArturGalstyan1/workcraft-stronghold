@@ -14,6 +14,7 @@ import (
 	"github.com/Artur-Galstyan/workcraft-stronghold/utils"
 	"github.com/Artur-Galstyan/workcraft-stronghold/views"
 	"github.com/a-h/templ"
+	"gorm.io/gorm"
 )
 
 func CreateTaskViewHandler(db *sql.DB) http.HandlerFunc {
@@ -175,33 +176,75 @@ func CreateTaskUpdateHandler(db *sql.DB, eventSender *events.EventSender) http.H
 	}
 }
 
-func CreatePostTaskHandler(db *sql.DB) http.HandlerFunc {
+func CreatePostTaskHandler(db *gorm.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		slog.Info("Received new task!")
-		task := models.Task{}
-		err := json.NewDecoder(r.Body).Decode(&task)
-		if err != nil {
+
+		var task models.Task
+		if err := json.NewDecoder(r.Body).Decode(&task); err != nil {
 			slog.Error("Failed to decode request body", "err", err)
 			http.Error(w, "Invalid request body", http.StatusBadRequest)
 			return
 		}
-		task.Status = models.TaskStatusPending
 
-		slog.Info("Creating task with ID and name", "id", task.ID, "name", task.TaskName)
+		// Start a transaction
+		tx := db.Begin()
+		if tx.Error != nil {
+			slog.Error("Failed to begin transaction", "err", tx.Error)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
 
-		err = sqls.CreateTask(db, task)
-		if err != nil {
+		// Validate and set defaults
+		if task.TaskName == "" {
+			tx.Rollback()
+			http.Error(w, "task name is required", http.StatusBadRequest)
+			return
+		}
+		if task.Status == "" {
+			task.Status = models.TaskStatusPending
+		}
+		if task.Queue == "" {
+			task.Queue = "DEFAULT"
+		}
+		if task.RetryLimit < 0 {
+			tx.Rollback()
+			http.Error(w, "retry limit cannot be negative", http.StatusBadRequest)
+			return
+		}
+
+		// Create the task
+		if err := tx.Create(&task).Error; err != nil {
+			tx.Rollback()
 			slog.Error("Failed to create task", "err", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
 		}
 
-		w.WriteHeader(http.StatusCreated)
-
-		err = json.NewEncoder(w).Encode(task)
-		if err != nil {
-			slog.Error("Failed to encode task", "err", err)
+		// Create the queue entry
+		queue := models.Queue{
+			TaskID: task.ID,
+			Queued: true,
+		}
+		if err := tx.Create(&queue).Error; err != nil {
+			tx.Rollback()
+			slog.Error("Failed to create queue", "err", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		// Commit the transaction
+		if err := tx.Commit().Error; err != nil {
+			tx.Rollback()
+			slog.Error("Failed to commit transaction", "err", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		if err := json.NewEncoder(w).Encode(task); err != nil {
+			slog.Error("Failed to encode task", "err", err)
 		}
 	}
 }
