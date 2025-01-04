@@ -40,14 +40,12 @@ templ Base() {
         }
     };
 
-    window.getWebsocket = function() {
+    window.getSSE = function() {
         const currentUrl = new URL(window.location.href);
         const isHTTPS = currentUrl.protocol === 'https:';
-        const wsProtocol = isHTTPS ? 'wss:' : 'ws:';
-        const wsUrl = `${wsProtocol}//${currentUrl.host}/ws/chieftain`;
+        const sseURL = `${currentUrl.protocol}//${currentUrl.host}/events?type=chieftain`;
 
-        let socket = new WebSocket(wsUrl);
-        return socket;
+        return new EventSource(sseURL, { withCredentials: isHTTPS });
     }
 
     window.getUUID = function() {

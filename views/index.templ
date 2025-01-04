@@ -58,6 +58,7 @@ templ Index() {
               return;
             }
             const data = await response.json();
+            console.log(data);
             $('#tasks').empty();
 
             data.items.forEach(function(item) {
