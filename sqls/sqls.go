@@ -11,7 +11,9 @@ import (
 )
 
 func CreatePeon(db *gorm.DB, p models.Peon) (models.Peon, error) {
-	p.Status = "IDLE"
+	if p.Status == "" {
+		p.Status = "IDLE"
+	}
 	p.LastHeartbeat = time.Now().UTC().String()
 	result := db.Create(&p)
 	if result.Error != nil {
@@ -50,10 +52,6 @@ func UpdatePeon(db *gorm.DB, peonID string, partialPeon models.PeonUpdate) (mode
 		updates["queues"] = partialPeon.Queues
 	}
 
-	if partialPeon.StatusSet && *partialPeon.Status == "OFFLINE" {
-		updates["current_task"] = nil
-	}
-
 	if len(updates) == 0 {
 		tx.Rollback()
 		return models.Peon{}, fmt.Errorf("no fields to update")
@@ -76,20 +74,24 @@ func UpdatePeon(db *gorm.DB, peonID string, partialPeon models.PeonUpdate) (mode
 		return models.Peon{}, fmt.Errorf("failed to fetch updated peon: %w", err)
 	}
 
+	if err := tx.Commit().Error; err != nil {
+		return models.Peon{}, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
 	if partialPeon.StatusSet && *partialPeon.Status == "OFFLINE" && updatedPeon.CurrentTask != nil {
 		pendingStatus := "PENDING"
-		_, err := UpdateTask(tx, *updatedPeon.CurrentTask, models.TaskUpdate{
+		_, err := UpdateTask(db, *updatedPeon.CurrentTask, models.TaskUpdate{
 			Status:    &pendingStatus,
 			StatusSet: true,
 		})
 		if err != nil {
-			tx.Rollback()
 			return models.Peon{}, fmt.Errorf("failed to update current task: %w", err)
 		}
-	}
 
-	if err := tx.Commit().Error; err != nil {
-		return models.Peon{}, fmt.Errorf("failed to commit transaction: %w", err)
+		result = db.Model(&models.Peon{}).Where("id = ?", peonID).Update("current_task", nil)
+		if result.Error != nil {
+			return models.Peon{}, fmt.Errorf("failed to update current task: %w", result.Error)
+		}
 	}
 
 	return updatedPeon, nil
@@ -203,6 +205,12 @@ func GetTask(db *gorm.DB, taskID string) (models.Task, error) {
 }
 
 func GetTasks(db *gorm.DB, queryParams models.TaskQuery) (models.PaginatedResponse, error) {
+	if queryParams.Page <= 0 {
+		queryParams.Page = 1
+	}
+	if queryParams.PerPage <= 0 {
+		queryParams.PerPage = 10
+	}
 	query := db.Model(&models.Task{})
 	if queryParams.Filter != nil {
 		if queryParams.Filter.Status != nil {
@@ -231,7 +239,7 @@ func GetTasks(db *gorm.DB, queryParams models.TaskQuery) (models.PaginatedRespon
 	if queryParams.Order != nil {
 		query = query.Order(fmt.Sprintf("%s %s", queryParams.Order.Field, queryParams.Order.Dir))
 	}
-	offset := queryParams.Page * queryParams.PerPage
+	offset := (queryParams.Page - 1) * queryParams.PerPage
 	query = query.Limit(queryParams.PerPage).Offset(offset)
 
 	var tasks []models.Task
@@ -315,6 +323,12 @@ func UpdateTask(db *gorm.DB, taskID string, partialTask models.TaskUpdate) (mode
 			tx.Rollback()
 			return models.Task{}, fmt.Errorf("failed to update queue: %w", resultQueue.Error)
 		}
+
+		result = tx.Model(&models.Task{}).Where("id = ?", taskID).Update("peon_id", nil)
+		if result.Error != nil {
+			tx.Rollback()
+			return models.Task{}, fmt.Errorf("failed to update peon_id: %w", result.Error)
+		}
 	}
 
 	var updatedTask models.Task
@@ -345,4 +359,16 @@ func UpdateSentToPeonQueueByTaskID(db *gorm.DB, taskID string, sentToPeon bool) 
 		return fmt.Errorf("failed to update sent to peon queue: %w", result.Error)
 	}
 	return nil
+}
+
+func GetTasksByPeonID(db *gorm.DB, peonID string) ([]models.Task, error) {
+	var tasks []models.Task
+	result := db.Find(&tasks, "peon_id = ?", peonID)
+	if result.Error == gorm.ErrRecordNotFound {
+		return []models.Task{}, nil
+	}
+	if result.Error != nil {
+		return []models.Task{}, fmt.Errorf("failed to find tasks by peon ID: %w", result.Error)
+	}
+	return tasks, nil
 }

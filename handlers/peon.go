@@ -44,16 +44,10 @@ func CreateGetPeonHandler(db *gorm.DB) http.HandlerFunc {
 			return
 		}
 
-		var peon models.Peon
-		result := db.First(&peon, "id = ?", peonID)
-
-		if result.Error == gorm.ErrRecordNotFound {
-			http.Error(w, "Peon not found", http.StatusNotFound)
-			return
-		}
-		if result.Error != nil {
-			slog.Error("Failed to fetch peon", "err", result.Error)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		peon, err := sqls.GetPeon(db, peonID)
+		if err != nil {
+			slog.Error("Error querying peon", "err", err)
+			http.Error(w, "Unable to find peon"+fmt.Sprintf("%v", err), http.StatusNotFound)
 			return
 		}
 
@@ -74,16 +68,11 @@ func CreateGetPeonTaskHandler(db *gorm.DB) http.HandlerFunc {
 			return
 		}
 
-		var tasks []models.Task
-		result := db.Where("peon_id = ?", peonID).Find(&tasks)
-		if result.Error != nil {
-			slog.Error("Error querying tasks", "err", result.Error)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		tasks, err := sqls.GetTasksByPeonID(db, peonID)
+		if err != nil {
+			slog.Error("Error querying tasks", "err", err)
+			http.Error(w, "Unable to find tasks", http.StatusInternalServerError)
 			return
-		}
-
-		if tasks == nil {
-			tasks = []models.Task{}
 		}
 
 		w.Header().Set("Content-Type", "application/json")
