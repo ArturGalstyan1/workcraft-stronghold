@@ -8,6 +8,7 @@ import (
 
 	"github.com/Artur-Galstyan/workcraft-stronghold/events"
 	"github.com/Artur-Galstyan/workcraft-stronghold/models"
+	"github.com/Artur-Galstyan/workcraft-stronghold/sqls"
 	"github.com/Artur-Galstyan/workcraft-stronghold/utils"
 	"github.com/Artur-Galstyan/workcraft-stronghold/views"
 	"github.com/a-h/templ"
@@ -24,62 +25,7 @@ func CreateGetPeonsHandler(db *gorm.DB) http.HandlerFunc {
 			return
 		}
 
-		query := db.Model(&models.Peon{})
-
-		if queryParams.Filter != nil {
-			if queryParams.Filter.Status != nil {
-				query = utils.ApplyFilterCondition(query, "status", queryParams.Filter.Status)
-			}
-			if queryParams.Filter.LastHeartbeat != nil {
-				query = utils.ApplyFilterCondition(query, "last_heartbeat", queryParams.Filter.LastHeartbeat)
-			}
-			if queryParams.Filter.CurrentTask != nil {
-				if queryParams.Filter.CurrentTask.Op == models.FilterOpIn ||
-					queryParams.Filter.CurrentTask.Op == models.FilterOpNotIn {
-					query.Where("current_task "+string(queryParams.Filter.CurrentTask.Op)+" (?)",
-						queryParams.Filter.CurrentTask.Value)
-				} else {
-					query = utils.ApplyFilterCondition(query, "current_task", queryParams.Filter.CurrentTask)
-				}
-			}
-			if queryParams.Filter.Queues != nil {
-				query = utils.ApplyFilterCondition(query, "queues", queryParams.Filter.Queues)
-			}
-		}
-
-		var totalItems int64
-		if err := query.Count(&totalItems).Error; err != nil {
-			slog.Error("Error counting peons", "err", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
-		}
-
-		if queryParams.Order != nil {
-			query = query.Order(fmt.Sprintf("%s %s", queryParams.Order.Field, queryParams.Order.Dir))
-		}
-		offset := queryParams.Page * queryParams.PerPage
-		query = query.Limit(queryParams.PerPage).Offset(offset)
-
-		var peons []models.Peon
-		if err := query.Find(&peons).Error; err != nil {
-			slog.Error("Error querying peons", "err", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
-		}
-
-		if peons == nil {
-			peons = []models.Peon{}
-		}
-
-		totalPages := (int(totalItems) + queryParams.PerPage - 1) / queryParams.PerPage
-
-		response := models.PaginatedResponse{
-			Page:       queryParams.Page,
-			PerPage:    queryParams.PerPage,
-			TotalItems: int(totalItems),
-			TotalPages: totalPages,
-			Items:      peons,
-		}
+		response, err := sqls.GetPeons(db, *queryParams)
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(response); err != nil {

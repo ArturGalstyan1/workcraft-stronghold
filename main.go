@@ -3,8 +3,6 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
-	"fmt"
 	"log"
 	"log/slog"
 	"net/http"
@@ -139,44 +137,44 @@ func sendPendingTasks(db *gorm.DB, eventSender *events.EventSender) {
 	}
 
 	// Process each queued task
-	for _, queue := range queues {
-		// Find peons that can handle this task's queue
-		availablePeonsForQueue := peonsByQueue[queue.Task.Queue]
-		if len(availablePeonsForQueue) == 0 {
-			continue
-		}
+	// for _, queue := range queues {
+	// 	// Find peons that can handle this task's queue
+	// 	availablePeonsForQueue := peonsByQueue[queue.Task.Queue]
+	// 	if len(availablePeonsForQueue) == 0 {
+	// 		continue
+	// 	}
 
-		// Select a peon (you could implement different selection strategies here)
-		selectedPeon := availablePeonsForQueue[0]
+	// 	// Select a peon (you could implement different selection strategies here)
+	// 	selectedPeon := availablePeonsForQueue[0]
 
-		// Send task to peon
-		taskJSON, err := json.Marshal(queue.Task)
-		if err != nil {
-			slog.Error("Failed to marshal task", "err", err)
-			continue
-		}
+	// 	// Send task to peon
+	// 	taskJSON, err := json.Marshal(queue.Task)
+	// 	if err != nil {
+	// 		slog.Error("Failed to marshal task", "err", err)
+	// 		continue
+	// 	}
 
-		msgString := fmt.Sprintf(`{"type": "new_task", "data": %s}`, string(taskJSON))
-		eventSender.SendEvent(selectedPeon.ID, msgString)
+	// 	msgString := fmt.Sprintf(`{"type": "new_task", "data": %s}`, string(taskJSON))
+	// 	eventSender.SendEvent(selectedPeon.ID, msgString)
 
-		// Update queue entry
-		err = db.Model(&queue).Update("queued", false).Error
-		if err != nil {
-			slog.Error("Failed to update queue entry", "err", err)
-			continue
-		}
+	// 	// Update queue entry
+	// 	err = db.Model(&queue).Update("queued", false).Error
+	// 	if err != nil {
+	// 		slog.Error("Failed to update queue entry", "err", err)
+	// 		continue
+	// 	}
 
-		// Remove the used peon from the available peons maps
-		for queueName, peons := range peonsByQueue {
-			newPeons := make([]models.Peon, 0)
-			for _, p := range peons {
-				if p.ID != selectedPeon.ID {
-					newPeons = append(newPeons, p)
-				}
-			}
-			peonsByQueue[queueName] = newPeons
-		}
-	}
+	// 	// Remove the used peon from the available peons maps
+	// 	for queueName, peons := range peonsByQueue {
+	// 		newPeons := make([]models.Peon, 0)
+	// 		for _, p := range peons {
+	// 			if p.ID != selectedPeon.ID {
+	// 				newPeons = append(newPeons, p)
+	// 			}
+	// 		}
+	// 		peonsByQueue[queueName] = newPeons
+	// 	}
+	// }
 }
 
 func putPendingTasksIntoQueue(db *gorm.DB) {
@@ -205,8 +203,8 @@ func putPendingTasksIntoQueue(db *gorm.DB) {
 
 	for _, task := range pendingTasks {
 		queue := models.Queue{
-			TaskID: task.ID,
-			Queued: true,
+			TaskID:     task.ID,
+			SentToPeon: true,
 		}
 		if err := tx.Create(&queue).Error; err != nil {
 			slog.Error("Failed to insert task into queue", "taskID", task.ID, "err", err)

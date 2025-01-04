@@ -18,9 +18,8 @@ type BaseModel struct {
 
 type Queue struct {
 	BaseModel
-	TaskID string `json:"task_id" gorm:"not null;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
-	Task   Task   `gorm:"foreignKey:TaskID"`
-	Queued bool   `json:"queued" gorm:"default:false"`
+	TaskID     string `json:"task_id" gorm:"not null"`
+	SentToPeon bool   `json:"queued" gorm:"default:false"`
 }
 
 type Task struct {
@@ -56,22 +55,35 @@ type Peon struct {
 }
 
 type PeonUpdate struct {
-	Status        *string `json:"status,omitempty" db:"status"`
-	LastHeartbeat *string `json:"last_heartbeat,omitempty" db:"last_heartbeat"`
-	CurrentTask   *string `json:"current_task,omitempty" db:"current_task"`
-	Queues        *string `json:"queues,omitempty" db:"queues"`
+	Status         *string `json:"status,omitempty" db:"status"`
+	StatusSet      bool    `json:"-"`
+	LastHeartbeat  *string `json:"last_heartbeat,omitempty" db:"last_heartbeat"`
+	HeartbeatSet   bool    `json:"-"`
+	CurrentTask    *string `json:"current_task,omitempty" db:"current_task"`
+	CurrentTaskSet bool    `json:"-"`
+	Queues         *string `json:"queues,omitempty" db:"queues"`
+	QueuesSet      bool    `json:"-"`
 }
 
 type TaskUpdate struct {
-	Status         *string      `db:"status"`
-	TaskName       *string      `db:"task_name"`
-	PeonID         *string      `db:"peon_id"`
-	Queue          *string      `db:"queue"`
-	Payload        *interface{} `db:"payload"`
-	Result         *string      `db:"result"`
-	RetryOnFailure *bool        `db:"retry_on_failure"`
-	RetryCount     *int         `db:"retry_count"`
-	RetryLimit     *int         `db:"retry_limit"`
+	Status            *string      `json:"status,omitempty" db:"status"`
+	StatusSet         bool         `json:"-"`
+	TaskName          *string      `json:"task_name,omitempty" db:"task_name"`
+	TaskNameSet       bool         `json:"-"`
+	PeonID            *string      `json:"peon_id,omitempty" db:"peon_id"`
+	PeonIDSet         bool         `json:"-"`
+	Queue             *string      `json:"queue,omitempty" db:"queue"`
+	QueueSet          bool         `json:"-"`
+	Payload           *interface{} `json:"payload,omitempty" db:"payload"`
+	PayloadSet        bool         `json:"-"`
+	Result            *string      `json:"result,omitempty" db:"result"`
+	ResultSet         bool         `json:"-"`
+	RetryOnFailure    *bool        `json:"retry_on_failure,omitempty" db:"retry_on_failure"`
+	RetryOnFailureSet bool         `json:"-"`
+	RetryCount        *int         `json:"retry_count,omitempty" db:"retry_count"`
+	RetryCountSet     bool         `json:"-"`
+	RetryLimit        *int         `json:"retry_limit,omitempty" db:"retry_limit"`
+	RetryLimitSet     bool         `json:"-"`
 }
 
 type SSEMessage struct {

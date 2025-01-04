@@ -50,6 +50,10 @@ func UpdatePeon(db *gorm.DB, peonID string, partialPeon models.PeonUpdate) (mode
 		updates["queues"] = partialPeon.Queues
 	}
 
+	if partialPeon.StatusSet && *partialPeon.Status == "OFFLINE" {
+		updates["current_task"] = nil
+	}
+
 	if len(updates) == 0 {
 		tx.Rollback()
 		return models.Peon{}, fmt.Errorf("no fields to update")
@@ -70,6 +74,18 @@ func UpdatePeon(db *gorm.DB, peonID string, partialPeon models.PeonUpdate) (mode
 	if err := tx.First(&updatedPeon, "id = ?", peonID).Error; err != nil {
 		tx.Rollback()
 		return models.Peon{}, fmt.Errorf("failed to fetch updated peon: %w", err)
+	}
+
+	if partialPeon.StatusSet && *partialPeon.Status == "OFFLINE" && updatedPeon.CurrentTask != nil {
+		pendingStatus := "PENDING"
+		_, err := UpdateTask(tx, *updatedPeon.CurrentTask, models.TaskUpdate{
+			Status:    &pendingStatus,
+			StatusSet: true,
+		})
+		if err != nil {
+			tx.Rollback()
+			return models.Peon{}, fmt.Errorf("failed to update current task: %w", err)
+		}
 	}
 
 	if err := tx.Commit().Error; err != nil {

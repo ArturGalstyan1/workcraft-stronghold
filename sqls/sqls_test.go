@@ -373,5 +373,4 @@ func TestGetPeonsPagination(t *testing.T) {
 	if !ok {
 		t.Fatalf("Expected Items to be []models.Peon, got %T", peons.Items)
 	}
-
 }

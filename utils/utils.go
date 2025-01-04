@@ -381,62 +381,62 @@ func ApplyFilterCondition(query *gorm.DB, field string, condition *models.Filter
 		}
 		return query.Where(field+" NOT IN (?)", condition.Value)
 	default:
-		// Log unknown operator or handle error
+		slog.Warn("Unsupported filter operator", "operator", condition.Op)
 		return query
 	}
 }
 
 func CleanInconsistencies(db *gorm.DB) error {
-    // Start a transaction
-    tx := db.Begin()
-    if tx.Error != nil {
-        return fmt.Errorf("failed to start transaction: %w", tx.Error)
-    }
-    defer tx.Rollback()
+	// Start a transaction
+	tx := db.Begin()
+	if tx.Error != nil {
+		return fmt.Errorf("failed to start transaction: %w", tx.Error)
+	}
+	defer tx.Rollback()
 
-    // Get all tasks that are in RUNNING state with offline peons
-    var inconsistentTasks []models.Task
-    if err := tx.Model(&models.Task{}).
-        Where("status = ? AND peon_id IN (SELECT id FROM peons WHERE status = ?)",
-            models.TaskStatusRunning, "OFFLINE").
-        Select("id").
-        Find(&inconsistentTasks).Error; err != nil {
-        return fmt.Errorf("failed to find inconsistent tasks: %w", err)
-    }
+	// Get all tasks that are in RUNNING state with offline peons
+	var inconsistentTasks []models.Task
+	if err := tx.Model(&models.Task{}).
+		Where("status = ? AND peon_id IN (SELECT id FROM peons WHERE status = ?)",
+			models.TaskStatusRunning, "OFFLINE").
+		Select("id").
+		Find(&inconsistentTasks).Error; err != nil {
+		return fmt.Errorf("failed to find inconsistent tasks: %w", err)
+	}
 
-    // For each inconsistent task
-    for _, task := range inconsistentTasks {
-        // Update task status and clear peon_id
-        if err := tx.Model(&models.Task{}).
-            Where("id = ?", task.ID).
-            Updates(map[string]interface{}{
-                "status":  models.TaskStatusPending,
-                "peon_id": nil,
-            }).Error; err != nil {
-            slog.Error("Failed to update task status", "taskID", task.ID, "err", err)
-            continue
-        }
+	// For each inconsistent task
+	for _, task := range inconsistentTasks {
+		// Update task status and clear peon_id
+		if err := tx.Model(&models.Task{}).
+			Where("id = ?", task.ID).
+			Updates(map[string]interface{}{
+				"status":  models.TaskStatusPending,
+				"peon_id": nil,
+			}).Error; err != nil {
+			slog.Error("Failed to update task status", "taskID", task.ID, "err", err)
+			continue
+		}
 
-        // Create queue entry for the task
-        queue := models.Queue{
-            TaskID: task.ID,
-            Queued: true,
-        }
-        if err := tx.Create(&queue).Error; err != nil {
-            return fmt.Errorf("failed to insert into queue: %w", err)
-        }
-    }
+		// Create queue entry for the task
+		queue := models.Queue{
+			TaskID:     task.ID,
+			SentToPeon: true,
+		}
+		if err := tx.Create(&queue).Error; err != nil {
+			return fmt.Errorf("failed to insert into queue: %w", err)
+		}
+	}
 
-    // Clean offline peons (if needed)
-    if err := tx.Where("status = ?", "OFFLINE").
-        Delete(&models.Peon{}).Error; err != nil {
-        return fmt.Errorf("failed to clean peons: %w", err)
-    }
+	// Clean offline peons (if needed)
+	if err := tx.Where("status = ?", "OFFLINE").
+		Delete(&models.Peon{}).Error; err != nil {
+		return fmt.Errorf("failed to clean peons: %w", err)
+	}
 
-    // Commit the transaction
-    if err := tx.Commit().Error; err != nil {
-        return fmt.Errorf("failed to commit transaction: %w", err)
-    }
+	// Commit the transaction
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
 
-    return nil
+	return nil
 }

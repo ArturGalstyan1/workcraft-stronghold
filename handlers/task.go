@@ -265,8 +265,8 @@ func CreatePostTaskHandler(db *gorm.DB) http.HandlerFunc {
 		}
 
 		queue := models.Queue{
-			TaskID: task.ID,
-			Queued: true,
+			TaskID:     task.ID,
+			SentToPeon: true,
 		}
 		if err := tx.Create(&queue).Error; err != nil {
 			tx.Rollback()
