@@ -91,12 +91,25 @@ func CreateUpdatePeonHandler(db *gorm.DB, eventSender *events.EventSender) http.
 			http.Error(w, "Peon ID is required", http.StatusBadRequest)
 			return
 		}
-		var update models.PeonUpdate
-		if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
+		var rawJSON map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&rawJSON); err != nil {
 			slog.Error("Failed to decode request body", "err", err)
 			http.Error(w, "Invalid request body", http.StatusBadRequest)
 			return
 		}
+
+		var update models.PeonUpdate
+		jsonBytes, _ := json.Marshal(rawJSON)
+		if err := json.Unmarshal(jsonBytes, &update); err != nil {
+			slog.Error("Failed to parse update data", "err", err)
+			http.Error(w, "Invalid update data", http.StatusBadRequest)
+			return
+		}
+
+		_, update.StatusSet = rawJSON["status"]
+		_, update.HeartbeatSet = rawJSON["last_heartbeat"]
+		_, update.CurrentTaskSet = rawJSON["current_task"]
+		_, update.QueuesSet = rawJSON["queues"]
 
 		updatedPeon, err := sqls.UpdatePeon(db, peonID, update)
 		if err != nil {

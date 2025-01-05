@@ -1,6 +1,7 @@
 package sqls
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -329,6 +330,14 @@ func UpdateTask(db *gorm.DB, taskID string, partialTask models.TaskUpdate) (mode
 			tx.Rollback()
 			return models.Task{}, fmt.Errorf("failed to update peon_id: %w", result.Error)
 		}
+	} else if partialTask.StatusSet && *partialTask.Status == "ACKNOWLEDGED" {
+		resultQueue := tx.Model(&models.Queue{}).
+			Where("task_id = ?", taskID).
+			Update("sent_to_peon", true)
+		if resultQueue.Error != nil {
+			tx.Rollback()
+			return models.Task{}, fmt.Errorf("failed to update queue: %w", resultQueue.Error)
+		}
 	}
 
 	var updatedTask models.Task
@@ -380,6 +389,9 @@ func GetAvailablePeon(db *gorm.DB, queue string) (models.Peon, error) {
 		`%'`+queue+`'%`)
 
 	if result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return models.Peon{}, fmt.Errorf("no available peon")
+		}
 		return models.Peon{}, fmt.Errorf("failed to find available peon: %w", result.Error)
 	}
 	return peon, nil

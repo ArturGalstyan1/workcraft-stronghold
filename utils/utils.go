@@ -427,12 +427,6 @@ func CleanInconsistencies(db *gorm.DB) error {
 		}
 	}
 
-	// Clean offline peons (if needed)
-	if err := tx.Where("status = ?", "OFFLINE").
-		Delete(&models.Peon{}).Error; err != nil {
-		return fmt.Errorf("failed to clean peons: %w", err)
-	}
-
 	// Commit the transaction
 	if err := tx.Commit().Error; err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)

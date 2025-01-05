@@ -43,36 +43,71 @@ func TaskView(w http.ResponseWriter, r *http.Request) {
 
 func CreateTaskUpdateHandler(db *gorm.DB, eventSender *events.EventSender) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		slog.Info("POST /api/task/{id}/update")
 		taskID := r.PathValue("id")
 		if taskID == "" {
 			slog.Error("Task ID is required")
 			http.Error(w, "Task ID is required", http.StatusBadRequest)
 			return
 		}
-		slog.Info("Received update for task", "id", taskID)
 
-		var update models.TaskUpdate
-		if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
+		var rawJSON map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&rawJSON); err != nil {
 			slog.Error("Failed to decode request body", "err", err)
 			http.Error(w, "Invalid request body", http.StatusBadRequest)
 			return
 		}
 
+		slog.Info("Received task update", "data", rawJSON)
+
+		jsonBytes, err := json.Marshal(rawJSON)
+		if err != nil {
+			slog.Error("Failed to marshal JSON", "err", err)
+			http.Error(w, "Invalid request data", http.StatusBadRequest)
+			return
+		}
+
+		var update models.TaskUpdate
+		if err := json.Unmarshal(jsonBytes, &update); err != nil {
+			slog.Error("Failed to parse update data", "err", err)
+			http.Error(w, "Invalid update data", http.StatusBadRequest)
+			return
+		}
+
+		// Set the flags based on field presence
+		_, update.StatusSet = rawJSON["status"]
+		_, update.TaskNameSet = rawJSON["task_name"]
+		_, update.PeonIDSet = rawJSON["peon_id"]
+		_, update.QueueSet = rawJSON["queue"]
+		_, update.PayloadSet = rawJSON["payload"]
+		_, update.ResultSet = rawJSON["result"]
+		_, update.RetryOnFailureSet = rawJSON["retry_on_failure"]
+		_, update.RetryCountSet = rawJSON["retry_count"]
+		_, update.RetryLimitSet = rawJSON["retry_limit"]
+
 		updatedTask, err := sqls.UpdateTask(db, taskID, update)
+		if err != nil {
+			slog.Error("Failed to update task", "err", err)
+			http.Error(w, "Failed to update task", http.StatusInternalServerError)
+			return
+		}
 
 		taskJSON, err := json.Marshal(updatedTask)
 		if err != nil {
 			slog.Error("Failed to serialize updated task", "err", err)
-		} else {
-			msg := fmt.Sprintf(`{"type": "task_update", "message": {"task": %s}}`,
-				string(taskJSON))
-			eventSender.BroadcastToChieftains(msg)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
 		}
 
+		msg := fmt.Sprintf(`{"type": "task_update", "message": {"task": %s}}`,
+			string(taskJSON))
+		eventSender.BroadcastToChieftains(msg)
+
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
 		if err := json.NewEncoder(w).Encode(updatedTask); err != nil {
 			slog.Error("Failed to encode response", "err", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
 		}
 	}
 }

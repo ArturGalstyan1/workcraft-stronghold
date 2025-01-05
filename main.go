@@ -119,15 +119,7 @@ func sendPendingTasks(db *gorm.DB, eventSender *events.EventSender) {
 
 		msgString := fmt.Sprintf(`{"type": "new_task", "data": %s}`, string(taskJSON))
 		eventSender.SendEvent(peon.ID, msgString)
-
-		err = sqls.UpdateSentToPeonQueueByTaskID(db, task.ID, true)
-
-		if err != nil {
-			slog.Error("Failed to update sent to peon queue", "err", err)
-			return
-		}
 	}
-
 }
 
 func putPendingTasksIntoQueue(db *gorm.DB) {
@@ -157,7 +149,7 @@ func putPendingTasksIntoQueue(db *gorm.DB) {
 	for _, task := range pendingTasks {
 		queue := models.Queue{
 			TaskID:     task.ID,
-			SentToPeon: true,
+			SentToPeon: false,
 		}
 		if err := tx.Create(&queue).Error; err != nil {
 			slog.Error("Failed to insert task into queue", "taskID", task.ID, "err", err)
