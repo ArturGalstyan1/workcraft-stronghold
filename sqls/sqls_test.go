@@ -599,5 +599,98 @@ func TestGetTasksByPeonID(t *testing.T) {
 	if *tasks[0].PeonID != p.ID {
 		t.Errorf("Expected task PeonID to be %s, got %s", p.ID, *tasks[0].PeonID)
 	}
+}
 
+func TestGetIdlePeon(t *testing.T) {
+	db := getDB()
+	peonQueue := "['DEFAULT']"
+	peon, err := sqls.CreatePeon(db, models.Peon{
+		Status: "WORKING",
+		Queues: &peonQueue,
+	})
+
+	if err != nil {
+		t.Errorf("CreatePeon failed: %v", err)
+	}
+
+	p, err := sqls.GetAvailablePeon(db, "DEFAULT")
+	if err == nil {
+		t.Errorf("Expected GetAvailablePeon to return error, got nil")
+	}
+
+	peonStatus := "IDLE"
+	updatedPeon, err := sqls.UpdatePeon(db, peon.ID, models.PeonUpdate{
+		Status:    &peonStatus,
+		StatusSet: true,
+	})
+
+	if err != nil {
+		t.Errorf("UpdatePeon failed: %v", err)
+	}
+
+	p, err = sqls.GetAvailablePeon(db, "DEFAULT")
+
+	if err != nil {
+		t.Errorf("GetAvailablePeon failed: %v", err)
+	}
+
+	if p.ID == "" {
+		t.Errorf("Expected peon ID to be not empty, got %s", p.ID)
+	}
+
+	if p.Status != "IDLE" {
+		t.Errorf("Expected peon status to be IDLE, got %s", p.Status)
+	}
+
+	if p.ID != updatedPeon.ID {
+		t.Errorf("Expected peon ID to be %s, got %s", updatedPeon.ID, p.ID)
+	}
+
+	peonQueue = "['DEFAULT', 'OTHER']"
+	peon, err = sqls.CreatePeon(db, models.Peon{
+		Status: "IDLE",
+		Queues: &peonQueue,
+	})
+
+	if err != nil {
+		t.Errorf("CreatePeon failed: %v", err)
+	}
+
+	p, err = sqls.GetAvailablePeon(db, "DEFAULT")
+
+	if err != nil {
+		t.Errorf("GetAvailablePeon failed: %v", err)
+	}
+
+	if p.ID == "" {
+		t.Errorf("Expected peon ID to be not empty, got %s", p.ID)
+	}
+
+	if p.Status != "IDLE" {
+		t.Errorf("Expected peon status to be IDLE, got %s", p.Status)
+	}
+
+	p, err = sqls.GetAvailablePeon(db, "OTHER")
+
+	if err != nil {
+		t.Errorf("GetAvailablePeon failed: %v", err)
+	}
+
+	if p.ID == "" {
+		t.Errorf("Expected peon ID to be not empty, got %s", p.ID)
+	}
+
+	if p.Status != "IDLE" {
+		t.Errorf("Expected peon status to be IDLE, got %s", p.Status)
+	}
+
+	p, err = sqls.GetAvailablePeon(db, "NON_EXISTENT")
+
+	if err == nil {
+		t.Errorf("Expected GetAvailablePeon to return error, got nil")
+	}
+
+	if p.ID != "" {
+		t.Errorf("Expected peon ID to be empty, got %s", p.ID)
+	}
 }

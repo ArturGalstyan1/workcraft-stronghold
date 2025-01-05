@@ -3,11 +3,12 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"log"
 	"log/slog"
 	"net/http"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/Artur-Galstyan/workcraft-stronghold/events"
 	"github.com/Artur-Galstyan/workcraft-stronghold/handlers"
 	"github.com/Artur-Galstyan/workcraft-stronghold/models"
+	"github.com/Artur-Galstyan/workcraft-stronghold/sqls"
 	"github.com/Artur-Galstyan/workcraft-stronghold/utils"
 	"github.com/Artur-Galstyan/workcraft-stronghold/views"
 	"github.com/a-h/templ"
@@ -93,88 +95,39 @@ func createTestHandler(eventSender *events.EventSender) http.HandlerFunc {
 }
 
 func sendPendingTasks(db *gorm.DB, eventSender *events.EventSender) {
-	// Get all queued tasks
-	var queues []models.Queue
-	err := db.Preload("Task").
-		Where("queued = ?", true).
-		Find(&queues).Error
-
+	tasks, err := sqls.GetNotYetSentOutTasks(db)
 	if err != nil {
-		slog.Error("Failed to get tasks from queue", "err", err)
+		slog.Error("Failed to get tasks", "err", err)
+		return
+	}
+	if len(tasks) == 0 {
 		return
 	}
 
-	if len(queues) == 0 {
-		return
-	}
-
-	// Get all available peons
-	var availablePeons []models.Peon
-	err = db.Where("status = ? AND current_task IS NULL", "IDLE").
-		Find(&availablePeons).Error
-
-	if err != nil {
-		slog.Error("Failed to get available peons", "err", err)
-		return
-	}
-
-	if len(availablePeons) == 0 {
-		slog.Info("No idle peons found")
-		return
-	}
-
-	// Create a map of peons by their supported queues
-	peonsByQueue := make(map[string][]models.Peon)
-	for _, peon := range availablePeons {
-		if peon.Queues == nil {
-			continue
+	for _, task := range tasks {
+		peon, err := sqls.GetAvailablePeon(db, task.Queue)
+		if err != nil {
+			slog.Info("Failed to get available peon, skipping. ", "err", err)
+			return
 		}
-		queues := strings.Split(*peon.Queues, ",")
-		for _, queue := range queues {
-			queue = strings.TrimSpace(queue)
-			peonsByQueue[queue] = append(peonsByQueue[queue], peon)
+
+		taskJSON, err := json.Marshal(task)
+		if err != nil {
+			slog.Error("Failed to marshal task", "err", err)
+			return
+		}
+
+		msgString := fmt.Sprintf(`{"type": "new_task", "data": %s}`, string(taskJSON))
+		eventSender.SendEvent(peon.ID, msgString)
+
+		err = sqls.UpdateSentToPeonQueueByTaskID(db, task.ID, true)
+
+		if err != nil {
+			slog.Error("Failed to update sent to peon queue", "err", err)
+			return
 		}
 	}
 
-	// Process each queued task
-	// for _, queue := range queues {
-	// 	// Find peons that can handle this task's queue
-	// 	availablePeonsForQueue := peonsByQueue[queue.Task.Queue]
-	// 	if len(availablePeonsForQueue) == 0 {
-	// 		continue
-	// 	}
-
-	// 	// Select a peon (you could implement different selection strategies here)
-	// 	selectedPeon := availablePeonsForQueue[0]
-
-	// 	// Send task to peon
-	// 	taskJSON, err := json.Marshal(queue.Task)
-	// 	if err != nil {
-	// 		slog.Error("Failed to marshal task", "err", err)
-	// 		continue
-	// 	}
-
-	// 	msgString := fmt.Sprintf(`{"type": "new_task", "data": %s}`, string(taskJSON))
-	// 	eventSender.SendEvent(selectedPeon.ID, msgString)
-
-	// 	// Update queue entry
-	// 	err = db.Model(&queue).Update("queued", false).Error
-	// 	if err != nil {
-	// 		slog.Error("Failed to update queue entry", "err", err)
-	// 		continue
-	// 	}
-
-	// 	// Remove the used peon from the available peons maps
-	// 	for queueName, peons := range peonsByQueue {
-	// 		newPeons := make([]models.Peon, 0)
-	// 		for _, p := range peons {
-	// 			if p.ID != selectedPeon.ID {
-	// 				newPeons = append(newPeons, p)
-	// 			}
-	// 		}
-	// 		peonsByQueue[queueName] = newPeons
-	// 	}
-	// }
 }
 
 func putPendingTasksIntoQueue(db *gorm.DB) {

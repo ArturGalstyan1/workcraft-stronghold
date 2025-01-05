@@ -372,3 +372,62 @@ func GetTasksByPeonID(db *gorm.DB, peonID string) ([]models.Task, error) {
 	}
 	return tasks, nil
 }
+
+func GetAvailablePeon(db *gorm.DB, queue string) (models.Peon, error) {
+	var peon models.Peon
+	result := db.First(&peon, `status = ? AND queues LIKE ?`,
+		"IDLE",
+		`%'`+queue+`'%`)
+
+	if result.Error != nil {
+		return models.Peon{}, fmt.Errorf("failed to find available peon: %w", result.Error)
+	}
+	return peon, nil
+}
+
+func GetAvailablePeons(db *gorm.DB, queue string) ([]models.Peon, error) {
+	var peons []models.Peon
+	result := db.Find(&peons, `status = ? AND queues LIKE ?`,
+		"IDLE",
+		`%'`+queue+`'%`)
+
+	if result.Error != nil {
+		return []models.Peon{}, fmt.Errorf("failed to find available peons: %w", result.Error)
+	}
+	return peons, nil
+}
+
+func CreateStats(db *gorm.DB, stats models.Stats) (models.Stats, error) {
+	result := db.Create(&stats)
+	if result.Error != nil {
+		return models.Stats{}, fmt.Errorf("failed to create stats: %w", result.Error)
+	}
+	return stats, nil
+}
+
+// TODO: Write tests for this function
+func GetNotYetSentOutTasks(db *gorm.DB) ([]models.Task, error) {
+	var tasks []models.Task
+	result := db.Where("status = ? AND id NOT IN (SELECT task_id FROM queues WHERE sent_to_peon = true)",
+		models.TaskStatusPending).
+		Find(&tasks)
+	if result.Error != nil {
+		return []models.Task{}, fmt.Errorf("failed to get pending tasks: %w", result.Error)
+	}
+	return tasks, nil
+}
+
+func UpdateQueueByTaskID(db *gorm.DB, taskID string, sentToPeon bool) (models.Queue, error) {
+	var queue models.Queue
+	result := db.First(&queue, "task_id = ?", taskID)
+	if result.Error != nil {
+		return models.Queue{}, fmt.Errorf("failed to find queue by task ID: %w", result.Error)
+	}
+
+	result = db.Model(&models.Queue{}).Where("task_id = ?", taskID).Update("sent_to_peon", sentToPeon)
+	if result.Error != nil {
+		return models.Queue{}, fmt.Errorf("failed to update queue by task ID: %w", result.Error)
+	}
+
+	return queue, nil
+}
