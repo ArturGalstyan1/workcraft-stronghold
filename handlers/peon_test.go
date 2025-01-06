@@ -206,5 +206,169 @@ func TestUpdatePeonHandler(t *testing.T) {
 		t.Errorf("handler returned unexpected body: got %v want %v",
 			task.PeonID, nil)
 	}
+}
 
+func TestGetPeonsHandler(t *testing.T) {
+	db := getDB()
+	handler := handlers.CreateGetPeonsHandler(db)
+
+	var taskIDs []string
+
+	for i := 0; i < 5; i++ {
+		task, err := sqls.CreateTask(db, models.Task{
+			TaskName: "test",
+		})
+		if err != nil {
+			t.Fatalf("Error creating task: %v", err)
+		}
+		taskIDs = append(taskIDs, task.ID)
+	}
+
+	var peonIDs []string
+	for i := 0; i < 10; i++ {
+		q := "['DEFAULT']"
+		p, err := sqls.CreatePeon(db, models.Peon{
+			Queues: &q,
+		})
+		if err != nil {
+			t.Fatalf("Error creating peon: %v", err)
+		}
+		peonIDs = append(peonIDs, p.ID)
+	}
+
+	for i := 0; i < 5; i++ {
+		workingStatus := "WORKING"
+		_, err := sqls.UpdatePeon(db, peonIDs[i], models.PeonUpdate{
+			Status:         &workingStatus,
+			StatusSet:      true,
+			CurrentTask:    &taskIDs[i],
+			CurrentTaskSet: true,
+		})
+		if err != nil {
+			t.Fatalf("Error updating peon: %v", err)
+		}
+	}
+
+	workingStatus := "WORKING"
+	filter := models.PeonFilter{
+		Status: &models.FilterCondition{
+			Op:    models.FilterOpEquals,
+			Value: &workingStatus,
+		},
+	}
+	q := models.PeonQuery{
+		QueryParams: models.QueryParams{},
+		Filter:      &filter,
+	}
+
+	qBytes, err := json.Marshal(q)
+	if err != nil {
+		t.Fatalf("Error marshalling query: %v", err)
+	}
+
+	path := "/api/peons/?query=" + string(qBytes)
+	req := httptest.NewRequest("GET", path, nil)
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if status := w.Code; status != http.StatusOK {
+		t.Errorf("handler returned wrong status code: got %v want %v",
+			status, http.StatusOK)
+	}
+
+	requestJSON := w.Body.String()
+	requestJSONBytes := []byte(requestJSON)
+
+	var response models.PaginatedResponse
+	err = json.Unmarshal(requestJSONBytes, &response)
+	if err != nil {
+		t.Fatalf("Error unmarshalling response: %v", err)
+	}
+
+	if response.TotalItems != 5 {
+		t.Errorf("handler returned unexpected body: got %v want %v",
+			response.TotalItems, 5)
+	}
+
+	idleStatus := "IDLE"
+	q = models.PeonQuery{
+		QueryParams: models.QueryParams{},
+		Filter: &models.PeonFilter{
+			Status: &models.FilterCondition{
+				Op:    models.FilterOpEquals,
+				Value: &idleStatus,
+			},
+		},
+	}
+
+	qBytes, err = json.Marshal(q)
+
+	if err != nil {
+		t.Fatalf("Error marshalling query: %v", err)
+	}
+
+	path = "/api/peons/?query=" + string(qBytes)
+	req = httptest.NewRequest("GET", path, nil)
+	w = httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if status := w.Code; status != http.StatusOK {
+		t.Errorf("handler returned wrong status code: got %v want %v",
+			status, http.StatusOK)
+	}
+
+	requestJSON = w.Body.String()
+	requestJSONBytes = []byte(requestJSON)
+
+	err = json.Unmarshal(requestJSONBytes, &response)
+	if err != nil {
+		t.Fatalf("Error unmarshalling response: %v", err)
+	}
+
+	if response.TotalItems != 5 {
+		t.Errorf("handler returned unexpected body: got %v want %v",
+			response.TotalItems, 5)
+	}
+
+	offlineStatus := "OFFLINE"
+	q = models.PeonQuery{
+		QueryParams: models.QueryParams{},
+		Filter: &models.PeonFilter{
+			Status: &models.FilterCondition{
+				Op:    models.FilterOpEquals,
+				Value: &offlineStatus,
+			},
+		},
+	}
+
+	qBytes, err = json.Marshal(q)
+	if err != nil {
+		t.Fatalf("Error marshalling query: %v", err)
+	}
+
+	path = "/api/peons/?query=" + string(qBytes)
+	req = httptest.NewRequest("GET", path, nil)
+	w = httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if status := w.Code; status != http.StatusOK {
+		t.Errorf("handler returned wrong status code: got %v want %v",
+			status, http.StatusOK)
+	}
+
+	requestJSON = w.Body.String()
+	requestJSONBytes = []byte(requestJSON)
+
+	err = json.Unmarshal(requestJSONBytes, &response)
+	if err != nil {
+		t.Fatalf("Error unmarshalling response: %v", err)
+	}
+
+	if response.TotalItems != 0 {
+		t.Errorf("handler returned unexpected body: got %v want %v",
+			response.TotalItems, 0)
+	}
 }

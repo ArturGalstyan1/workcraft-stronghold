@@ -84,6 +84,8 @@ func UpdatePeon(db *gorm.DB, peonID string, partialPeon models.PeonUpdate) (mode
 		_, err := UpdateTask(db, *updatedPeon.CurrentTask, models.TaskUpdate{
 			Status:    &pendingStatus,
 			StatusSet: true,
+			PeonID:    nil,
+			PeonIDSet: true,
 		})
 		if err != nil {
 			return models.Peon{}, fmt.Errorf("failed to update current task: %w", err)
