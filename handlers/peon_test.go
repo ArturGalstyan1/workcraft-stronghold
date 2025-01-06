@@ -372,3 +372,49 @@ func TestGetPeonsHandler(t *testing.T) {
 			response.TotalItems, 0)
 	}
 }
+
+func TestGetPeonTaskHandler(t *testing.T) {
+	db := getDB()
+	handler := handlers.CreateGetPeonTaskHandler(db)
+
+	p, err := sqls.CreatePeon(db, models.Peon{})
+	if err != nil {
+		t.Fatalf("Error creating peon: %v", err)
+	}
+
+	for i := 0; i < 5; i++ {
+		_, err := sqls.CreateTask(db, models.Task{
+			TaskName: "test",
+			PeonID:   &p.ID,
+		})
+		if err != nil {
+			t.Fatalf("Error creating task: %v", err)
+		}
+	}
+
+	req := httptest.NewRequest("GET", "/api/peon/{id}/tasks", nil)
+	req.SetPathValue("id", p.ID)
+
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if status := w.Code; status != http.StatusOK {
+		t.Errorf("handler returned wrong status code: got %v want %v",
+			status, http.StatusOK)
+	}
+
+	requestJSON := w.Body.String()
+	requestJSONBytes := []byte(requestJSON)
+
+	var response []models.Task
+	err = json.Unmarshal(requestJSONBytes, &response)
+	if err != nil {
+		t.Fatalf("Error unmarshalling response: %v", err)
+	}
+
+	if len(response) != 5 {
+		t.Errorf("handler returned unexpected body: got %v want %v",
+			len(response), 5)
+	}
+
+}
