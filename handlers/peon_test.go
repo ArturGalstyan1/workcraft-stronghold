@@ -418,3 +418,36 @@ func TestGetPeonTaskHandler(t *testing.T) {
 	}
 
 }
+
+func TestPostStatisticsHandler(t *testing.T) {
+	db := getDB()
+	handler := handlers.CreatePostStatisticsHandler(db)
+
+	stats := map[string]interface{}{
+		"type": "cpu_usage",
+		"value": map[string]interface{}{
+			"percentage": 75.5,
+			"cores_used": 6,
+		},
+		"peon_id": "330617ac-c981-472f-ac3c-c428b6eea42e",
+		"task_id": "550e8400-e29b-41d4-a716-446655440001",
+	}
+
+	reqBody, err := json.Marshal(stats)
+	if err != nil {
+		t.Fatalf("Error marshalling request body: %v", err)
+	}
+
+	req := httptest.NewRequest("POST", "/api/peon/{id}/statistics", bytes.NewBuffer(reqBody))
+	req.SetPathValue("id", "330617ac-c981-472f-ac3c-c428b6eea42e")
+
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if status := w.Code; status != http.StatusOK {
+		t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusOK)
+	}
+
+}
