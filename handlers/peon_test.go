@@ -154,4 +154,57 @@ func TestUpdatePeonHandler(t *testing.T) {
 			task.PeonID, p.ID)
 	}
 
+	reqBody = map[string]interface{}{
+		"status": "OFFLINE",
+	}
+
+	reqBodyBytes, err = json.Marshal(reqBody)
+	if err != nil {
+		t.Fatalf("Error marshalling request body: %v", err)
+	}
+
+	req = httptest.NewRequest("POST", "/api/peon/", bytes.NewBuffer(reqBodyBytes))
+	req.SetPathValue("id", p.ID)
+
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+
+	updatePeonHandler.ServeHTTP(w, req)
+
+	if status := w.Code; status != http.StatusOK {
+		t.Errorf("handler returned wrong status code: got %v want %v",
+			status, http.StatusOK)
+	}
+
+	peon, err = sqls.GetPeon(db, p.ID)
+	if err != nil {
+		t.Fatalf("Error querying peon: %v", err)
+	}
+
+	if peon.Status != "OFFLINE" {
+		t.Errorf("handler returned unexpected body: got %v want %v",
+			peon.Status, "OFFLINE")
+	}
+
+	if peon.CurrentTask != nil {
+		t.Errorf("handler returned unexpected body: got %v want %v",
+			peon.CurrentTask, nil)
+	}
+
+	task, err = sqls.GetTask(db, task.ID)
+
+	if err != nil {
+		t.Fatalf("Error querying task: %v", err)
+	}
+
+	if task.Status != "PENDING" {
+		t.Errorf("handler returned unexpected body: got %v want %v",
+			task.Status, "PENDING")
+	}
+
+	if task.PeonID != nil {
+		t.Errorf("handler returned unexpected body: got %v want %v",
+			task.PeonID, nil)
+	}
+
 }
