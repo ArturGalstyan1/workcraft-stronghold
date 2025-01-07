@@ -26,7 +26,7 @@ type Task struct {
 	BaseModel
 	TaskName       string      `json:"task_name"`
 	Status         TaskStatus  `json:"status"`
-	PeonID         *string     `json:"peon_id" gorm:"type:uuid"`
+	PeonID         *string     `json:"peon_id" gorm:"type:uuid;foreignKey:ID;references:peons"`
 	Queue          string      `json:"queue"`
 	PayloadStr     string      `json:"-" gorm:"column:payload;type:text"`
 	ResultStr      string      `json:"-" gorm:"column:result;type:text"`
@@ -50,7 +50,7 @@ type Peon struct {
 	BaseModel
 	Status        string  `json:"status"`
 	LastHeartbeat string  `json:"last_heartbeat"`
-	CurrentTask   *string `json:"current_task" gorm:"type:uuid"`
+	CurrentTask   *string `json:"current_task" gorm:"type:uuid;foreignKey:ID;references:tasks"`
 	Queues        *string `json:"queues"`
 }
 
