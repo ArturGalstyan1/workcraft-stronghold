@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/Artur-Galstyan/workcraft-stronghold/errs"
 	"github.com/Artur-Galstyan/workcraft-stronghold/events"
 	"github.com/Artur-Galstyan/workcraft-stronghold/models"
 	"github.com/Artur-Galstyan/workcraft-stronghold/sqls"
@@ -87,8 +88,9 @@ func CreateTaskUpdateHandler(db *gorm.DB, eventSender *events.EventSender) http.
 
 		updatedTask, err := sqls.UpdateTask(db, taskID, update)
 		if err != nil {
+			status, msg := errs.Get(err)
 			slog.Error("Failed to update task", "err", err)
-			http.Error(w, "Failed to update task", http.StatusInternalServerError)
+			http.Error(w, msg, status)
 			return
 		}
 
