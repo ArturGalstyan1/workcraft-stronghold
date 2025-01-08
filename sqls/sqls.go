@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/Artur-Galstyan/workcraft-stronghold/errs"
 	"github.com/Artur-Galstyan/workcraft-stronghold/models"
 	"github.com/Artur-Galstyan/workcraft-stronghold/utils"
 	"gorm.io/gorm"
@@ -322,6 +323,19 @@ func UpdateTask(db *gorm.DB, taskID string, partialTask models.TaskUpdate) (mode
 		return models.Task{}, fmt.Errorf("no fields to update")
 	}
 
+	if partialTask.StatusSet && *partialTask.Status == "RUNNING" {
+		// Check status BEFORE applying any updates
+		var task models.Task
+		if err := tx.First(&task, "id = ?", taskID).Error; err != nil {
+			tx.Rollback()
+			return models.Task{}, fmt.Errorf("failed to fetch task: %w", err)
+		}
+		if task.Status != "ACKNOWLEDGED" {
+			tx.Rollback()
+			return models.Task{}, errs.TaskWasNotAcknowledgedErr
+		}
+	}
+
 	result := tx.Model(&models.Task{}).Where("id = ?", taskID).Updates(updates)
 	if result.Error != nil {
 		tx.Rollback()
@@ -348,6 +362,10 @@ func UpdateTask(db *gorm.DB, taskID string, partialTask models.TaskUpdate) (mode
 			return models.Task{}, fmt.Errorf("failed to update peon_id: %w", result.Error)
 		}
 	} else if partialTask.StatusSet && *partialTask.Status == "ACKNOWLEDGED" {
+		if partialTask.PeonIDSet != true {
+			tx.Rollback()
+			return models.Task{}, errs.PeonIDRequiredForAckErr
+		}
 		resultQueue := tx.Model(&models.Queue{}).
 			Where("task_id = ?", taskID).
 			Update("sent_to_peon", true)
