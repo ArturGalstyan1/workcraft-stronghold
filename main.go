@@ -51,41 +51,6 @@ func init() {
 	hashedApiKey = hex.EncodeToString(hasher.Sum(nil))
 }
 
-func setupCronJobs(db *gorm.DB) {
-	c := cron.New()
-	var cronMutex sync.Mutex
-
-	c.AddFunc("* * * * *", func() {
-		cronMutex.Lock()
-		defer cronMutex.Unlock()
-		result := db.Model(&models.Peon{}).
-			Where("last_heartbeat < datetime('now', '-1 minutes')").
-			Updates(map[string]interface{}{
-				"status":       "OFFLINE",
-				"current_task": nil,
-			})
-		if result.Error != nil {
-			slog.Error("Failed to clean up dead peons", "err", result.Error)
-			return
-		}
-
-	})
-
-	c.AddFunc("* * * * *", func() {
-		cronMutex.Lock()
-		defer cronMutex.Unlock()
-
-		err := utils.CleanInconsistencies(db)
-		if err != nil {
-			slog.Error("Failed to clean up inconsistencies", "err", err)
-			return
-		}
-
-	})
-
-	c.Start()
-}
-
 func createTestHandler(eventSender *events.EventSender) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		slog.Info("GET /test")
@@ -172,6 +137,41 @@ func sendPendingTasksInterval(db *gorm.DB, eventSender *events.EventSender) {
 			sendPendingTasks(db, eventSender)
 		}
 	}
+}
+
+func setupCronJobs(db *gorm.DB) {
+	c := cron.New()
+	var cronMutex sync.Mutex
+
+	c.AddFunc("* * * * *", func() {
+		cronMutex.Lock()
+		defer cronMutex.Unlock()
+		result := db.Model(&models.Peon{}).
+			Where("last_heartbeat < datetime('now', '-1 minutes')").
+			Updates(map[string]interface{}{
+				"status":       "OFFLINE",
+				"current_task": nil,
+			})
+		if result.Error != nil {
+			slog.Error("Failed to clean up dead peons", "err", result.Error)
+			return
+		}
+
+	})
+
+	c.AddFunc("* * * * *", func() {
+		cronMutex.Lock()
+		defer cronMutex.Unlock()
+
+		err := utils.CleanInconsistencies(db)
+		if err != nil {
+			slog.Error("Failed to clean up inconsistencies", "err", err)
+			return
+		}
+
+	})
+
+	c.Start()
 }
 
 func main() {
