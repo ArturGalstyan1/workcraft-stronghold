@@ -6,13 +6,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"sync"
 	"time"
 
 	"github.com/Artur-Galstyan/workcraft-stronghold/events"
+	"github.com/Artur-Galstyan/workcraft-stronghold/handlers"
 	"github.com/Artur-Galstyan/workcraft-stronghold/models"
 	"github.com/Artur-Galstyan/workcraft-stronghold/sqls"
 	"github.com/Artur-Galstyan/workcraft-stronghold/utils"
+	"github.com/Artur-Galstyan/workcraft-stronghold/views"
+	"github.com/a-h/templ"
 	"github.com/robfig/cron/v3"
 	"gorm.io/gorm"
 )
@@ -76,6 +80,59 @@ func (s *Stronghold) SetupCRONJobs() {
 func (s *Stronghold) Run() {
 	go s.SetupCRONJobs()
 	go s.SendPendingTasksInterval()
+	s.StartHTTPServer()
+}
+
+func (s *Stronghold) StartHTTPServer() {
+	fs := http.FileServer(http.Dir("static"))
+	http.Handle("/static/", http.StripPrefix("/static/", fs))
+
+	component := views.Index()
+	http.Handle("/", templ.Handler(component))
+	http.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			component := views.Login()
+			templ.Handler(component).ServeHTTP(w, r)
+		case http.MethodPost:
+			handlers.LoginHandler(w, r)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
+	http.HandleFunc("GET /task/{id}", handlers.AuthMiddleware(handlers.CreateTaskViewHandler(s.db), s.hashedAPIKey))
+	http.HandleFunc("GET /tasks/", handlers.AuthMiddleware(handlers.TaskView, s.hashedAPIKey))
+	http.HandleFunc("GET /peon/{id}/", handlers.AuthMiddleware(handlers.CreatePeonViewHandler(), s.hashedAPIKey))
+	http.HandleFunc("GET /peons/", handlers.AuthMiddleware(handlers.CreatePeonsViewHandler(), s.hashedAPIKey))
+
+	http.HandleFunc("GET /api/peons", handlers.AuthMiddleware(handlers.CreateGetPeonsHandler(s.db), s.hashedAPIKey))
+	http.HandleFunc("GET /api/peon/{id}", handlers.AuthMiddleware(handlers.CreateGetPeonHandler(s.db), s.hashedAPIKey))
+	http.HandleFunc("GET /api/peon/{id}/tasks", handlers.AuthMiddleware(handlers.CreateGetPeonTaskHandler(s.db), s.hashedAPIKey))
+	http.HandleFunc("POST /api/peon/{id}/update", handlers.AuthMiddleware(handlers.CreateUpdatePeonHandler(s.db, s.eventSender), s.hashedAPIKey))
+	http.HandleFunc("POST /api/peon/{id}/statistics", handlers.AuthMiddleware(handlers.CreatePostStatisticsHandler(s.db), s.hashedAPIKey))
+
+	http.HandleFunc("POST /api/task", handlers.AuthMiddleware(handlers.CreatePostTaskHandler(s.db), s.hashedAPIKey))
+	http.HandleFunc("GET /api/tasks", handlers.AuthMiddleware(handlers.CreateGetTasksHandler(s.db), s.hashedAPIKey))
+	http.HandleFunc("GET /api/task/{id}", handlers.AuthMiddleware(handlers.CreateGetTaskHandler(s.db), s.hashedAPIKey))
+	http.HandleFunc("POST /api/task/{id}/cancel", handlers.AuthMiddleware(handlers.CreateCancelTaskHandler(s.db, s.eventSender), s.hashedAPIKey))
+	http.HandleFunc("POST /api/task/{id}/update", handlers.AuthMiddleware(handlers.CreateTaskUpdateHandler(s.db, s.eventSender), s.hashedAPIKey))
+	http.HandleFunc("GET /api/test", handlers.AuthMiddleware(createTestHandler(s.eventSender), s.hashedAPIKey))
+	http.HandleFunc("/events", handlers.AuthMiddleware(handlers.CreateSSEHandler(s.eventSender, s.db), s.hashedAPIKey))
+
+	slog.Info("Building Stronghold on port 6112")
+	if err := http.ListenAndServe(":6112", nil); err != nil {
+		slog.Error("Server failed", "error", err)
+	}
+
+}
+
+func createTestHandler(eventSender *events.EventSender) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		slog.Info("GET /test")
+		eventSender.BroadcastToChieftains("HI")
+		w.Write([]byte("Success!"))
+	}
 }
 
 func (s *Stronghold) SendPendingTasks() {
