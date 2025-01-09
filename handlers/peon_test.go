@@ -101,6 +101,17 @@ func TestUpdatePeonHandler(t *testing.T) {
 		t.Fatalf("Error creating task: %v", err)
 	}
 
+	acknowledgedStatus := "ACKNOWLEDGED"
+	task, err = sqls.UpdateTask(db, task.ID, models.TaskUpdate{
+		Status:    &acknowledgedStatus,
+		StatusSet: true,
+		PeonID:    &p.ID,
+		PeonIDSet: true,
+	})
+	if err != nil {
+		t.Fatalf("Error updating task: %v", err)
+	}
+
 	reqBody := map[string]interface{}{
 		"status":       "WORKING",
 		"current_task": task.ID,
@@ -119,7 +130,7 @@ func TestUpdatePeonHandler(t *testing.T) {
 	updatePeonHandler.ServeHTTP(w, req)
 
 	if status := w.Code; status != http.StatusOK {
-		t.Errorf("handler returned wrong status code: got %v want %v",
+		t.Fatalf("handler returned wrong status code: got %v want %v",
 			status, http.StatusOK)
 	}
 
@@ -136,6 +147,15 @@ func TestUpdatePeonHandler(t *testing.T) {
 	if *peon.CurrentTask != task.ID {
 		t.Errorf("handler returned unexpected body: got %v want %v",
 			peon.CurrentTask, task.ID)
+	}
+
+	runningStatus := "RUNNING"
+	_, err = sqls.UpdateTask(db, task.ID, models.TaskUpdate{
+		Status:    &runningStatus,
+		StatusSet: true,
+	})
+	if err != nil {
+		t.Fatalf("Error updating task: %v", err)
 	}
 
 	task, err = sqls.GetTask(db, task.ID)
