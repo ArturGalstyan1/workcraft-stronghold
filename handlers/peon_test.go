@@ -11,30 +11,12 @@ import (
 	"github.com/Artur-Galstyan/workcraft-stronghold/handlers"
 	"github.com/Artur-Galstyan/workcraft-stronghold/models"
 	"github.com/Artur-Galstyan/workcraft-stronghold/sqls"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
+	"github.com/Artur-Galstyan/workcraft-stronghold/utils"
 )
 
-func getDB() *gorm.DB {
-	path := "file::memory:"
-	db, err := gorm.Open(sqlite.Open(path), &gorm.Config{})
-	if err != nil {
-		panic(err)
-	}
-	err = db.AutoMigrate(
-		&models.Peon{},
-		&models.Task{},
-		&models.Stats{},
-		&models.Queue{},
-	)
-	if err != nil {
-		panic(err)
-	}
-	return db
-}
-
 func TestGetPeonHandler(t *testing.T) {
-	db := getDB()
+	db, cleanUp := utils.GetDB()
+	defer cleanUp()
 	getPeonHandler := handlers.CreateGetPeonHandler(db)
 
 	q := "['DEFAULT']"
@@ -82,7 +64,10 @@ func TestGetPeonHandler(t *testing.T) {
 }
 
 func TestUpdatePeonHandler(t *testing.T) {
-	db := getDB()
+
+	db, cleanUp := utils.GetDB()
+	defer cleanUp()
+
 	eventSender := events.NewEventSender()
 	updatePeonHandler := handlers.CreateUpdatePeonHandler(db, eventSender)
 
@@ -229,7 +214,10 @@ func TestUpdatePeonHandler(t *testing.T) {
 }
 
 func TestGetPeonsHandler(t *testing.T) {
-	db := getDB()
+
+	db, cleanUp := utils.GetDB()
+	defer cleanUp()
+
 	handler := handlers.CreateGetPeonsHandler(db)
 
 	var taskIDs []string
@@ -394,7 +382,10 @@ func TestGetPeonsHandler(t *testing.T) {
 }
 
 func TestGetPeonTaskHandler(t *testing.T) {
-	db := getDB()
+
+	db, cleanUp := utils.GetDB()
+	defer cleanUp()
+
 	handler := handlers.CreateGetPeonTaskHandler(db)
 
 	p, err := sqls.CreatePeon(db, models.Peon{})
@@ -440,7 +431,10 @@ func TestGetPeonTaskHandler(t *testing.T) {
 }
 
 func TestPostStatisticsHandler(t *testing.T) {
-	db := getDB()
+
+	db, cleanUp := utils.GetDB()
+	defer cleanUp()
+
 	handler := handlers.CreatePostStatisticsHandler(db)
 
 	stats := map[string]interface{}{

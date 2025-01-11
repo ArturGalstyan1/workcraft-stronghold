@@ -8,6 +8,7 @@ import (
 
 	"github.com/Artur-Galstyan/workcraft-stronghold/events"
 	"github.com/Artur-Galstyan/workcraft-stronghold/models"
+	"github.com/Artur-Galstyan/workcraft-stronghold/sqls"
 	"github.com/Artur-Galstyan/workcraft-stronghold/utils"
 	"gorm.io/gorm"
 )
@@ -47,16 +48,14 @@ func CreateSSEHandler(eventSender *events.EventSender, db *gorm.DB) http.Handler
 				Status: "IDLE",
 				Queues: &queues,
 			}
-			peon.ID = peonID // Set ID explicitly since we have it
+			peon.ID = peonID
 
-			result := db.Where(models.Peon{BaseModel: models.BaseModel{ID: peonID}}).
-				FirstOrCreate(&peon)
-
-			if result.Error != nil {
-				slog.Error("Failed to insert/update peon in db", "err", result.Error)
-				http.Error(w, "Failed to insert peon into db", http.StatusInternalServerError)
+			_, err := sqls.CreatePeon(db, peon)
+			if err != nil {
+				slog.Error("Failed to create peon", "err", err)
 				return
 			}
+
 		} else {
 			connectionID = fmt.Sprintf("chieftain-%s", utils.GenerateUUID())
 		}

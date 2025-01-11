@@ -13,10 +13,13 @@ import (
 	"github.com/Artur-Galstyan/workcraft-stronghold/handlers"
 	"github.com/Artur-Galstyan/workcraft-stronghold/models"
 	"github.com/Artur-Galstyan/workcraft-stronghold/sqls"
+	"github.com/Artur-Galstyan/workcraft-stronghold/utils"
 )
 
 func TestGetTaskHandler(t *testing.T) {
-	db := getDB()
+
+	db, cleanUp := utils.GetDB()
+	defer cleanUp()
 
 	handler := handlers.CreateGetTaskHandler(db)
 
@@ -55,7 +58,10 @@ func TestGetTaskHandler(t *testing.T) {
 }
 
 func TestCreateNewTask(t *testing.T) {
-	db := getDB()
+
+	db, cleanUp := utils.GetDB()
+	defer cleanUp()
+
 	handler := handlers.CreatePostTaskHandler(db)
 
 	taskJSON := `{"task_name": "test", "payload": {"task_args": [1,2,3]}}}`
@@ -113,7 +119,10 @@ func TestCreateNewTask(t *testing.T) {
 }
 
 func TestUpdateTask(t *testing.T) {
-	db := getDB()
+
+	db, cleanUp := utils.GetDB()
+	defer cleanUp()
+
 	eventSender := events.NewEventSender()
 	handler := handlers.CreateTaskUpdateHandler(db, eventSender)
 

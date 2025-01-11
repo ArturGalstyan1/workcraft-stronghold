@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/Artur-Galstyan/workcraft-stronghold/models"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -433,4 +435,31 @@ func CleanInconsistencies(db *gorm.DB) error {
 	}
 
 	return nil
+}
+
+func GetDB() (*gorm.DB, func()) {
+	uuidString := GenerateUUID()
+	path := fmt.Sprintf("stronghold-%s.db", uuidString)
+
+	cleanup := func() {
+		slog.Info("Deleting temporary database file", "path", path)
+		if err := os.Remove(path); err != nil {
+			slog.Error("Failed to delete temporary database file", "path", path, "error", err)
+		}
+	}
+
+	db, err := gorm.Open(sqlite.Open(path), &gorm.Config{})
+	if err != nil {
+		panic(err)
+	}
+	err = db.AutoMigrate(
+		&models.Peon{},
+		&models.Task{},
+		&models.Stats{},
+		&models.Queue{},
+	)
+	if err != nil {
+		panic(err)
+	}
+	return db, cleanup
 }

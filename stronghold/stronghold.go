@@ -118,6 +118,7 @@ func (s *Stronghold) StartHTTPServer() {
 	http.HandleFunc("POST /api/task/{id}/cancel", handlers.AuthMiddleware(handlers.CreateCancelTaskHandler(s.db, s.eventSender), s.hashedAPIKey))
 	http.HandleFunc("POST /api/task/{id}/update", handlers.AuthMiddleware(handlers.CreateTaskUpdateHandler(s.db, s.eventSender), s.hashedAPIKey))
 	http.HandleFunc("GET /api/test", handlers.AuthMiddleware(createTestHandler(s.eventSender), s.hashedAPIKey))
+	http.HandleFunc("GET /api/heartbeat", heartbeatHandler())
 	http.HandleFunc("/events", handlers.AuthMiddleware(handlers.CreateSSEHandler(s.eventSender, s.db), s.hashedAPIKey))
 
 	slog.Info("Building Stronghold on port 6112")
@@ -125,6 +126,13 @@ func (s *Stronghold) StartHTTPServer() {
 		slog.Error("Server failed", "error", err)
 	}
 
+}
+
+func heartbeatHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		slog.Info("GET /heartbeat")
+		w.Write([]byte("Success!"))
+	}
 }
 
 func createTestHandler(eventSender *events.EventSender) http.HandlerFunc {
