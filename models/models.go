@@ -267,5 +267,15 @@ func (base *BaseModel) BeforeCreate(tx *gorm.DB) error {
 	if base.ID == "" {
 		base.ID = uuid.New().String()
 	}
+
+	creationDate := time.Now()
+	base.CreatedAt = creationDate
+	base.UpdatedAt = creationDate
+
+	return nil
+}
+
+func (base *BaseModel) BeforeUpdate(tx *gorm.DB) error {
+	base.UpdatedAt = time.Now()
 	return nil
 }

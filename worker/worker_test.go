@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Artur-Galstyan/workcraft-stronghold/events"
+	"github.com/Artur-Galstyan/workcraft-stronghold/models"
 	"github.com/Artur-Galstyan/workcraft-stronghold/sqls"
 	"github.com/Artur-Galstyan/workcraft-stronghold/stronghold"
 	"github.com/Artur-Galstyan/workcraft-stronghold/utils"
@@ -30,7 +31,7 @@ func TestMockWorker(t *testing.T) {
 	go s.Run()
 	time.Sleep(1 * time.Second)
 
-	worker := worker.NewMockWorker("1", []string{"queue1", "queue2"})
+	worker := worker.NewMockWorker("1", []string{"queue1", "queue2"}, "abcd")
 	if worker.ID != "1" {
 		t.Error("ID should be 1")
 	}
@@ -51,6 +52,34 @@ func TestMockWorker(t *testing.T) {
 	if p.ID != "1" {
 		t.Fatal("Peon ID should be 1")
 	}
+
+	t.Log(p)
+
+	task, err := sqls.CreateTask(db, models.Task{
+		Queue:    "queue1",
+		TaskName: "test",
+	})
+	if err != nil {
+		t.Fatal("Failed to create task")
+	}
+
+	q, err := sqls.GetTaskFromQueueByTaskID(db, task.ID)
+	if err != nil {
+		t.Fatal("Failed to get task from queue")
+	}
+
+	if q.TaskID != task.ID {
+		t.Fatal("Task ID should be the same")
+	}
+
+	time.Sleep(5 * time.Second)
+
+	latestPeon, err := sqls.GetPeon(db, "1")
+	if err != nil {
+		t.Fatal("Failed to get peon")
+	}
+
+	t.Log(latestPeon)
 
 	worker.Stop()
 }
