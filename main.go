@@ -18,7 +18,7 @@ func init() {
 		log.Fatal("Error loading .env file")
 	}
 
-	apiKey := os.Getenv("WORKCRAFT_API_KEY")
+	apiKey = os.Getenv("WORKCRAFT_API_KEY")
 	if apiKey == "" {
 		log.Fatal("WORKCRAFT_API_KEY not set in environment")
 	}

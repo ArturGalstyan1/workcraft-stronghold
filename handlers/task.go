@@ -142,7 +142,7 @@ func CreatePostTaskHandler(db *gorm.DB) http.HandlerFunc {
 
 func CreateGetTasksHandler(db *gorm.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		slog.Info("GET /api/tasks")
+		// slog.Info("GET /api/tasks")
 		queryString := r.URL.Query().Get("query")
 
 		queryParams, err := utils.ParseTaskQuery(queryString)

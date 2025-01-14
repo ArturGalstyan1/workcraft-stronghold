@@ -17,7 +17,7 @@ import (
 
 func CreateGetPeonsHandler(db *gorm.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		slog.Info("GET /api/peons")
+		// slog.Info("GET /api/peons")
 
 		queryParams, err := utils.ParsePeonQuery(r.URL.Query().Get("query"))
 		if err != nil {

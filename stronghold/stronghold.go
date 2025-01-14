@@ -17,7 +17,6 @@ import (
 	"github.com/Artur-Galstyan/workcraft-stronghold/utils"
 	"github.com/Artur-Galstyan/workcraft-stronghold/views"
 	"github.com/a-h/templ"
-	"github.com/robfig/cron/v3"
 	"gorm.io/gorm"
 )
 
@@ -41,44 +40,48 @@ func NewStronghold(apiKey string, db *gorm.DB, eventSender *events.EventSender) 
 
 }
 
-func (s *Stronghold) SetupCRONJobs() {
+func (s *Stronghold) SetupBackgroundTasks() {
+	var mutex sync.Mutex
 
-	c := cron.New()
-	var cronMutex sync.Mutex
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			mutex.Lock()
+			cutoffTime := time.Now().Add(-1 * time.Minute).Format("2006-01-02T15:04:05.999999")
 
-	c.AddFunc("* * * * *", func() {
-		cronMutex.Lock()
-		defer cronMutex.Unlock()
-		result := s.db.Model(&models.Peon{}).
-			Where("last_heartbeat < datetime('now', '-1 minutes')").
-			Updates(map[string]interface{}{
-				"status":       "OFFLINE",
-				"current_task": nil,
-			})
-		if result.Error != nil {
-			slog.Error("Failed to clean up dead peons", "err", result.Error)
-			return
+			result := s.db.Model(&models.Peon{}).
+				Where("last_heartbeat < ? AND status != 'OFFLINE'", cutoffTime).
+				Updates(map[string]interface{}{
+					"status":       "OFFLINE",
+					"current_task": nil,
+				})
+			mutex.Unlock()
+
+			if result.Error != nil {
+				slog.Error("Failed to clean up dead peons", "err", result.Error)
+			}
 		}
+	}()
 
-	})
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
 
-	c.AddFunc("* * * * *", func() {
-		cronMutex.Lock()
-		defer cronMutex.Unlock()
+		for range ticker.C {
+			mutex.Lock()
+			err := utils.CleanInconsistencies(s.db)
+			mutex.Unlock()
 
-		err := utils.CleanInconsistencies(s.db)
-		if err != nil {
-			slog.Error("Failed to clean up inconsistencies", "err", err)
-			return
+			if err != nil {
+				slog.Error("Failed to clean up inconsistencies", "err", err)
+			}
 		}
-
-	})
-
-	c.Start()
+	}()
 }
 
 func (s *Stronghold) Run() {
-	go s.SetupCRONJobs()
+	go s.SetupBackgroundTasks()
 	go s.SendPendingTasksInterval()
 	s.StartHTTPServer()
 }

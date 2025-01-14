@@ -10,17 +10,31 @@ import (
 	"github.com/Artur-Galstyan/workcraft-stronghold/models"
 	"github.com/Artur-Galstyan/workcraft-stronghold/utils"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 func CreatePeon(db *gorm.DB, p models.Peon) (models.Peon, error) {
 	if p.Status == "" {
 		p.Status = "IDLE"
 	}
-	p.LastHeartbeat = time.Now().UTC().String()
-	result := db.Create(&p)
+	p.LastHeartbeat = time.Now().UTC().Format("2006-01-02T15:04:05.999999")
+
+	// Define which columns to update on conflict
+	result := db.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "id"}}, // primary key
+		DoUpdates: clause.AssignmentColumns([]string{
+			"status",
+			"last_heartbeat",
+			"current_task",
+			"queues",
+			"updated_at",
+		}),
+	}).Create(&p)
+
 	if result.Error != nil {
-		return models.Peon{}, fmt.Errorf("failed to create peon: %w", result.Error)
+		return models.Peon{}, fmt.Errorf("failed to upsert peon: %w", result.Error)
 	}
+
 	return p, nil
 }
 

@@ -22,7 +22,6 @@ func AuthMiddleware(next http.HandlerFunc, hashedApiKey string) http.HandlerFunc
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := r.Header.Get("WORKCRAFT_API_KEY")
 		if token != "" {
-			// Use constant-time comparison for API key
 			if subtle.ConstantTimeCompare([]byte(token), []byte(hashedApiKey)) == 1 {
 				next.ServeHTTP(w, r)
 				return

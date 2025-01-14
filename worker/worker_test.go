@@ -17,15 +17,6 @@ func TestMockWorker(t *testing.T) {
 	db, cleanUp := utils.GetDB()
 	defer cleanUp()
 
-	var tables []string
-	result := db.Raw("SELECT name FROM sqlite_master WHERE type='table';").Scan(&tables)
-	if result.Error != nil {
-		t.Fatal("Failed to query tables:", result.Error)
-	}
-	t.Log("Available tables:")
-	for _, table := range tables {
-		t.Log(table)
-	}
 	eventSender := events.NewEventSender()
 	s := stronghold.NewStronghold("abcd", db, eventSender)
 	go s.Run()
@@ -33,53 +24,67 @@ func TestMockWorker(t *testing.T) {
 
 	worker := worker.NewMockWorker("1", []string{"queue1", "queue2"}, "abcd")
 	if worker.ID != "1" {
-		t.Error("ID should be 1")
+		t.Fatal("ID should be 1")
 	}
-	context := context.Background()
-	t.Log("Starting worker")
-	go worker.Start(context)
-	time.Sleep(5 * time.Second)
 
+	ctx := context.Background()
+	t.Log("Starting worker")
+	go worker.Start(ctx)
+
+	// Wait for worker to initialize
+	time.Sleep(2 * time.Second)
+
+	// Verify initial worker state
 	p, err := sqls.GetPeon(db, "1")
 	if err != nil {
-		t.Fatal("Failed to get peon")
+		t.Fatal("Failed to get peon:", err)
 	}
-
 	if p.Status != "IDLE" {
-		t.Fatal("Peon status should be IDLE")
+		t.Fatal("Initial peon status should be IDLE, got:", p.Status)
 	}
 
-	if p.ID != "1" {
-		t.Fatal("Peon ID should be 1")
-	}
-
-	t.Log(p)
-
+	// Create a test task
 	task, err := sqls.CreateTask(db, models.Task{
 		Queue:    "queue1",
 		TaskName: "test",
 	})
 	if err != nil {
-		t.Fatal("Failed to create task")
+		t.Fatal("Failed to create task:", err)
 	}
 
+	// Verify task was created in queue
 	q, err := sqls.GetTaskFromQueueByTaskID(db, task.ID)
 	if err != nil {
-		t.Fatal("Failed to get task from queue")
+		t.Fatal("Failed to get task from queue:", err)
 	}
-
 	if q.TaskID != task.ID {
-		t.Fatal("Task ID should be the same")
+		t.Fatal("Task ID mismatch")
 	}
 
-	time.Sleep(5 * time.Second)
+	// Wait for task processing
+	time.Sleep(10 * time.Second)
 
+	// Verify task final state
+	processedTask, err := sqls.GetTask(db, task.ID)
+	if err != nil {
+		t.Fatal("Failed to get processed task:", err)
+	}
+	if processedTask.Status != "SUCCESSFUL" {
+		t.Fatal("Expected task status to be SUCCESSFUL, got:", processedTask.Status)
+	}
+
+	// Verify worker final state
 	latestPeon, err := sqls.GetPeon(db, "1")
 	if err != nil {
-		t.Fatal("Failed to get peon")
+		t.Fatal("Failed to get final peon state:", err)
+	}
+	if latestPeon.Status != "IDLE" {
+		t.Fatal("Expected final peon status to be IDLE, got:", latestPeon.Status)
 	}
 
-	t.Log(latestPeon)
-
+	// Stop the worker
 	worker.Stop()
+
+	// Give some time for cleanup
+	time.Sleep(1 * time.Second)
 }
