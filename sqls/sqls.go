@@ -421,11 +421,16 @@ func GetTasksByPeonID(db *gorm.DB, peonID string) ([]models.Task, error) {
 	return tasks, nil
 }
 
-func GetAvailablePeon(db *gorm.DB, queue string) (models.Peon, error) {
+func GetAvailablePeon(db *gorm.DB, queue string, usedPeons map[string]bool) (models.Peon, error) {
 	var peon models.Peon
-	result := db.First(&peon, `status = ? AND queues LIKE ?`,
-		"IDLE",
-		`%'`+queue+`'%`)
+
+	query := db.Where("status = ? AND queues LIKE ?", "IDLE", `%'`+queue+`'%`)
+	for peonID := range usedPeons {
+		if peonID != "" {
+			query = query.Where("id != ?", peonID)
+		}
+	}
+	result := query.First(&peon)
 
 	if result.Error != nil {
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {

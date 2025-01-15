@@ -32,28 +32,28 @@ func TestCreateAndPeon(t *testing.T) {
 
 	p, err := sqls.CreatePeon(db, models.Peon{})
 	if err != nil {
-		t.Errorf("CreatePeon failed: %v", err)
+		t.Fatalf("CreatePeon failed: %v", err)
 	}
 
 	if p.Status != "IDLE" {
-		t.Errorf("Expected status to be IDLE, got %s", p.Status)
+		t.Fatalf("Expected status to be IDLE, got %s", p.Status)
 	}
 
 	pFromDB, err := sqls.GetPeon(db, p.ID)
 	if err != nil {
-		t.Errorf("GetPeon failed: %v", err)
+		t.Fatalf("GetPeon failed: %v", err)
 	}
 
 	if pFromDB.ID != p.ID {
-		t.Errorf("Expected ID to be %s, got %s", p.ID, pFromDB.ID)
+		t.Fatalf("Expected ID to be %s, got %s", p.ID, pFromDB.ID)
 	}
 
 	if pFromDB.Status != p.Status {
-		t.Errorf("Expected status to be %s, got %s", p.Status, pFromDB.Status)
+		t.Fatalf("Expected status to be %s, got %s", p.Status, pFromDB.Status)
 	}
 
 	if pFromDB.LastHeartbeat != p.LastHeartbeat {
-		t.Errorf("Expected LastHeartbeat to be %s, got %s", p.LastHeartbeat, pFromDB.LastHeartbeat)
+		t.Fatalf("Expected LastHeartbeat to be %s, got %s", p.LastHeartbeat, pFromDB.LastHeartbeat)
 	}
 }
 
@@ -64,35 +64,38 @@ func TestUpdatePeon(t *testing.T) {
 		Queues: &queues,
 	})
 	if err != nil {
-		t.Errorf("CreatePeon failed: %v", err)
+		t.Fatalf("CreatePeon failed: %v", err)
 	}
 
 	status := "WORKING"
+	currentTaskString := "abcb"
 	updates := models.PeonUpdate{
-		Status:    &status,
-		StatusSet: true,
+		Status:         &status,
+		StatusSet:      true,
+		CurrentTask:    &currentTaskString,
+		CurrentTaskSet: true,
 	}
 
 	updatedPeon, err := sqls.UpdatePeon(db, p.ID, updates)
 	if err != nil {
-		t.Errorf("UpdatePeon failed: %v", err)
+		t.Fatalf("UpdatePeon failed: %v", err)
 	}
 
 	if updatedPeon.Status != status {
-		t.Errorf("Expected status to be %s, got %s", status, updatedPeon.Status)
+		t.Fatalf("Expected status to be %s, got %s", status, updatedPeon.Status)
 	}
 
 	updatedPeonFromGet, err := sqls.GetPeon(db, p.ID)
 	if err != nil {
-		t.Errorf("GetPeon failed: %v", err)
+		t.Fatalf("GetPeon failed: %v", err)
 	}
 
 	if updatedPeonFromGet.Status != status {
-		t.Errorf("Expected status to be %s, got %s", status, updatedPeonFromGet.Status)
+		t.Fatalf("Expected status to be %s, got %s", status, updatedPeonFromGet.Status)
 	}
 
 	if *updatedPeonFromGet.Queues != *p.Queues {
-		t.Errorf("Expected queues to be %s, got %s", *p.Queues, *updatedPeonFromGet.Queues)
+		t.Fatalf("Expected queues to be %s, got %s", *p.Queues, *updatedPeonFromGet.Queues)
 	}
 
 	updates = models.PeonUpdate{
@@ -102,11 +105,11 @@ func TestUpdatePeon(t *testing.T) {
 
 	updatedPeon, err = sqls.UpdatePeon(db, p.ID, updates)
 	if err != nil {
-		t.Errorf("UpdatePeon failed: %v", err)
+		t.Fatalf("UpdatePeon failed: %v", err)
 	}
 
 	if updatedPeon.Queues != nil {
-		t.Errorf("Expected queues to be nil, got %s", *updatedPeon.Queues)
+		t.Fatalf("Expected queues to be nil, got %s", *updatedPeon.Queues)
 	}
 }
 
@@ -127,45 +130,45 @@ func TestCreateTask(t *testing.T) {
 	})
 
 	if err != nil {
-		t.Errorf("CreateTask failed: %v", err)
+		t.Fatalf("CreateTask failed: %v", err)
 	}
 
 	if task.Status != models.TaskStatusPending {
-		t.Errorf("Expected status to be %s, got %s", models.TaskStatusPending, task.Status)
+		t.Fatalf("Expected status to be %s, got %s", models.TaskStatusPending, task.Status)
 	}
 
 	q, err := sqls.GetTaskFromQueueByTaskID(db, task.ID)
 	if err != nil {
-		t.Errorf("GetTaskFromQueueByTaskID failed: %v", err)
+		t.Fatalf("GetTaskFromQueueByTaskID failed: %v", err)
 	}
 
 	if q.SentToPeon != false {
-		t.Errorf("Expected SentToPeon to be false, got %v", q.SentToPeon)
+		t.Fatalf("Expected SentToPeon to be false, got %v", q.SentToPeon)
 	}
 
 	taskFromGet, err := sqls.GetTask(db, task.ID)
 	if err != nil {
-		t.Errorf("GetTask failed: %v", err)
+		t.Fatalf("GetTask failed: %v", err)
 	}
 
 	if taskFromGet.ID != task.ID {
-		t.Errorf("Expected ID to be %s, got %s", task.ID, taskFromGet.ID)
+		t.Fatalf("Expected ID to be %s, got %s", task.ID, taskFromGet.ID)
 	}
 
 	if taskFromGet.Status != task.Status {
-		t.Errorf("Expected status to be %s, got %s", task.Status, taskFromGet.Status)
+		t.Fatalf("Expected status to be %s, got %s", task.Status, taskFromGet.Status)
 	}
 
 	if taskFromGet.Queue != task.Queue {
-		t.Errorf("Expected queue to be %s, got %s", task.Queue, taskFromGet.Queue)
+		t.Fatalf("Expected queue to be %s, got %s", task.Queue, taskFromGet.Queue)
 	}
 
 	if taskFromGet.Payload.TaskArgs[0] != task.Payload.TaskArgs[0] {
-		t.Errorf("Expected payload to be %v, got %v", task.Payload.TaskArgs[0], taskFromGet.Payload.TaskArgs[0])
+		t.Fatalf("Expected payload to be %v, got %v", task.Payload.TaskArgs[0], taskFromGet.Payload.TaskArgs[0])
 	}
 
 	if taskFromGet.Status != models.TaskStatusPending {
-		t.Errorf("Expected status to be %s, got %s", models.TaskStatusPending, taskFromGet.Status)
+		t.Fatalf("Expected status to be %s, got %s", models.TaskStatusPending, taskFromGet.Status)
 	}
 }
 
@@ -186,30 +189,30 @@ func TestDequeueEnqueueTask(t *testing.T) {
 	})
 
 	if err != nil {
-		t.Errorf("CreateTask failed: %v", err)
+		t.Fatalf("CreateTask failed: %v", err)
 	}
 
 	q, err := sqls.GetTaskFromQueueByTaskID(db, task.ID)
 
 	if err != nil {
-		t.Errorf("GetTaskFromQueueByTaskID failed: %v", err)
+		t.Fatalf("GetTaskFromQueueByTaskID failed: %v", err)
 	}
 	if q.SentToPeon != false {
-		t.Errorf("Expected SentToPeon to be false, got %v", q.SentToPeon)
+		t.Fatalf("Expected SentToPeon to be false, got %v", q.SentToPeon)
 	}
 
 	err = sqls.UpdateSentToPeonQueueByTaskID(db, task.ID, true)
 	if err != nil {
-		t.Errorf("UpdateSentToPeonQueueByTaskID failed: %v", err)
+		t.Fatalf("UpdateSentToPeonQueueByTaskID failed: %v", err)
 	}
 
 	q, err = sqls.GetTaskFromQueueByTaskID(db, task.ID)
 	if err != nil {
-		t.Errorf("GetTaskFromQueueByTaskID failed: %v", err)
+		t.Fatalf("GetTaskFromQueueByTaskID failed: %v", err)
 	}
 
 	if q.SentToPeon != true {
-		t.Errorf("Expected SentToPeon to be true, got %v", q.SentToPeon)
+		t.Fatalf("Expected SentToPeon to be true, got %v", q.SentToPeon)
 	}
 }
 
@@ -230,7 +233,7 @@ func TestUpdateTask(t *testing.T) {
 	})
 
 	if err != nil {
-		t.Errorf("CreateTask failed: %v", err)
+		t.Fatalf("CreateTask failed: %v", err)
 	}
 
 	newTaskName := "newTest"
@@ -241,20 +244,20 @@ func TestUpdateTask(t *testing.T) {
 
 	updatedTask, err := sqls.UpdateTask(db, task.ID, updates)
 	if err != nil {
-		t.Errorf("UpdateTask failed: %v", err)
+		t.Fatalf("UpdateTask failed: %v", err)
 	}
 
 	if updatedTask.TaskName != newTaskName {
-		t.Errorf("Expected task name to be %s, got %s", newTaskName, updatedTask.TaskName)
+		t.Fatalf("Expected task name to be %s, got %s", newTaskName, updatedTask.TaskName)
 	}
 
 	updatedTaskFromGet, err := sqls.GetTask(db, task.ID)
 	if err != nil {
-		t.Errorf("GetTask failed: %v", err)
+		t.Fatalf("GetTask failed: %v", err)
 	}
 
 	if updatedTaskFromGet.TaskName != newTaskName {
-		t.Errorf("Expected task name to be %s, got %s", newTaskName, updatedTaskFromGet.TaskName)
+		t.Fatalf("Expected task name to be %s, got %s", newTaskName, updatedTaskFromGet.TaskName)
 	}
 
 	newTaskStatus := "PENDING"
@@ -265,34 +268,34 @@ func TestUpdateTask(t *testing.T) {
 
 	updatedTask, err = sqls.UpdateTask(db, task.ID, updates)
 	if err != nil {
-		t.Errorf("UpdateTask failed: %v", err)
+		t.Fatalf("UpdateTask failed: %v", err)
 	}
 
 	if updatedTask.Status != models.TaskStatusPending {
-		t.Errorf("Expected status to be %s, got %s", models.TaskStatusPending, updatedTask.Status)
+		t.Fatalf("Expected status to be %s, got %s", models.TaskStatusPending, updatedTask.Status)
 	}
 
 	q, err := sqls.GetTaskFromQueueByTaskID(db, task.ID)
 	if err != nil {
-		t.Errorf("GetTaskFromQueueByTaskID failed: %v", err)
+		t.Fatalf("GetTaskFromQueueByTaskID failed: %v", err)
 	}
 
 	if q.SentToPeon != false {
-		t.Errorf("Expected SentToPeon to be false, got %v", q.SentToPeon)
+		t.Fatalf("Expected SentToPeon to be false, got %v", q.SentToPeon)
 	}
 
 	err = sqls.UpdateSentToPeonQueueByTaskID(db, task.ID, true)
 	if err != nil {
-		t.Errorf("UpdateSentToPeonQueueByTaskID failed: %v", err)
+		t.Fatalf("UpdateSentToPeonQueueByTaskID failed: %v", err)
 	}
 
 	q, err = sqls.GetTaskFromQueueByTaskID(db, task.ID)
 	if err != nil {
-		t.Errorf("GetTaskFromQueueByTaskID failed: %v", err)
+		t.Fatalf("GetTaskFromQueueByTaskID failed: %v", err)
 	}
 
 	if q.SentToPeon != true {
-		t.Errorf("Expected SentToPeon to be true, got %v", q.SentToPeon)
+		t.Fatalf("Expected SentToPeon to be true, got %v", q.SentToPeon)
 	}
 }
 
@@ -303,7 +306,7 @@ func TestGetPeonsPagination(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		p, err := sqls.CreatePeon(db, models.Peon{})
 		if err != nil {
-			t.Errorf("CreatePeon failed: %v", err)
+			t.Fatalf("CreatePeon failed: %v", err)
 		}
 		createdIDs = append(createdIDs, p.ID)
 	}
@@ -314,7 +317,7 @@ func TestGetPeonsPagination(t *testing.T) {
 	}
 
 	if count != 10 {
-		t.Errorf("Expected number of peons to be 10, got %d", count)
+		t.Fatalf("Expected number of peons to be 10, got %d", count)
 	}
 
 	peons, err := sqls.GetPeons(db, models.PeonQuery{})
@@ -328,7 +331,7 @@ func TestGetPeonsPagination(t *testing.T) {
 	}
 
 	if peons.TotalItems != 10 {
-		t.Errorf("Expected total items to be 10, got %d", peons.TotalItems)
+		t.Fatalf("Expected total items to be 10, got %d", peons.TotalItems)
 	}
 
 	peonItems, ok := peons.Items.([]models.Peon)
@@ -342,13 +345,16 @@ func TestGetPeonsPagination(t *testing.T) {
 
 	for i := 0; i < 5; i++ {
 		status := "WORKING"
+		dummyTaskID := "abcd"
 		updates := models.PeonUpdate{
-			Status:    &status,
-			StatusSet: true,
+			Status:         &status,
+			StatusSet:      true,
+			CurrentTask:    &dummyTaskID,
+			CurrentTaskSet: true,
 		}
 		_, err := sqls.UpdatePeon(db, peonItems[i].ID, updates)
 		if err != nil {
-			t.Errorf("UpdatePeon failed: %v", err)
+			t.Fatalf("UpdatePeon failed: %v", err)
 		}
 	}
 
@@ -366,7 +372,7 @@ func TestGetPeonsPagination(t *testing.T) {
 	}
 
 	if peons.TotalItems != 5 {
-		t.Errorf("Expected total items to be 5, got %d", peons.TotalItems)
+		t.Fatalf("Expected total items to be 5, got %d", peons.TotalItems)
 	}
 
 	peonItems, ok = peons.Items.([]models.Peon)
@@ -390,7 +396,7 @@ func TestGetTasksPagination(t *testing.T) {
 			},
 		})
 		if err != nil {
-			t.Errorf("CreateTask failed: %v", err)
+			t.Fatalf("CreateTask failed: %v", err)
 		}
 		createdIDs = append(createdIDs, task.ID)
 	}
@@ -401,7 +407,7 @@ func TestGetTasksPagination(t *testing.T) {
 	}
 
 	if count != 10 {
-		t.Errorf("Expected number of tasks to be 10, got %d", count)
+		t.Fatalf("Expected number of tasks to be 10, got %d", count)
 	}
 
 	tasks, err := sqls.GetTasks(db, models.TaskQuery{})
@@ -415,11 +421,11 @@ func TestGetTasksPagination(t *testing.T) {
 	}
 
 	if tasks.TotalItems != 10 {
-		t.Errorf("Expected total items to be 10, got %d", tasks.TotalItems)
+		t.Fatalf("Expected total items to be 10, got %d", tasks.TotalItems)
 	}
 
 	if tasks.TotalItems != int(count) {
-		t.Errorf("Expected total items to be %d, got %d", count, tasks.TotalItems)
+		t.Fatalf("Expected total items to be %d, got %d", count, tasks.TotalItems)
 	}
 
 	taskItems, ok := tasks.Items.([]models.Task)
@@ -432,14 +438,17 @@ func TestGetTasksPagination(t *testing.T) {
 	}
 
 	for i := 0; i < 5; i++ {
-		newStatus := "RUNNING"
+		newStatus := "ACKNOWLEDGED"
+		peonID := "abcd"
 		updates := models.TaskUpdate{
 			Status:    &newStatus,
 			StatusSet: true,
+			PeonID:    &peonID,
+			PeonIDSet: true,
 		}
 		_, err := sqls.UpdateTask(db, taskItems[i].ID, updates)
 		if err != nil {
-			t.Errorf("UpdateTask failed: %v", err)
+			t.Fatalf("UpdateTask failed: %v", err)
 		}
 	}
 
@@ -447,7 +456,7 @@ func TestGetTasksPagination(t *testing.T) {
 		Filter: &models.TaskFilter{
 			Status: &models.FilterCondition{
 				Op:    models.FilterOpEquals,
-				Value: "RUNNING",
+				Value: "ACKNOWLEDGED",
 			},
 		},
 	})
@@ -457,7 +466,7 @@ func TestGetTasksPagination(t *testing.T) {
 	}
 
 	if tasks.TotalItems != 5 {
-		t.Errorf("Expected total items to be 5, got %d", tasks.TotalItems)
+		t.Fatalf("Expected total items to be 5, got %d", tasks.TotalItems)
 	}
 
 }
@@ -474,7 +483,7 @@ func TestUpdatePeonWithTaskToOffline(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Errorf("CreateTask failed: %v", err)
+		t.Fatalf("CreateTask failed: %v", err)
 	}
 
 	peon, err := sqls.CreatePeon(db, models.Peon{
@@ -484,30 +493,38 @@ func TestUpdatePeonWithTaskToOffline(t *testing.T) {
 	})
 
 	if err != nil {
-		t.Errorf("CreatePeon failed: %v", err)
+		t.Fatalf("CreatePeon failed: %v", err)
 	}
 
 	if peon.Status != "WORKING" {
-		t.Errorf("Expected status to be WORKING, got %s", peon.Status)
+		t.Fatalf("Expected status to be WORKING, got %s", peon.Status)
 	}
-	runningStatus := "RUNNING"
+	ackStatus := "ACKNOWLEDGED"
 	updatedTask, err := sqls.UpdateTask(db, task.ID, models.TaskUpdate{
-		Status:    &runningStatus,
+		Status:    &ackStatus,
 		StatusSet: true,
 		PeonID:    &peon.ID,
 		PeonIDSet: true,
 	})
 
 	if err != nil {
-		t.Errorf("UpdateTask failed: %v", err)
+		t.Fatalf("UpdateTask failed: %v", err)
 	}
 
+	runningStatus := "RUNNING"
+	updatedTask, err = sqls.UpdateTask(db, task.ID, models.TaskUpdate{
+		Status:    &runningStatus,
+		StatusSet: true,
+		PeonID:    &peon.ID,
+		PeonIDSet: true,
+	})
+
 	if updatedTask.Status != "RUNNING" {
-		t.Errorf("Expected status to be RUNNING, got %s", updatedTask.Status)
+		t.Fatalf("Expected status to be RUNNING, got %s", updatedTask.Status)
 	}
 
 	if *updatedTask.PeonID != peon.ID {
-		t.Errorf("Expected peon ID to be %s, got %s", peon.ID, *updatedTask.PeonID)
+		t.Fatalf("Expected peon ID to be %s, got %s", peon.ID, *updatedTask.PeonID)
 	}
 
 	offlineStatus := "OFFLINE"
@@ -517,42 +534,42 @@ func TestUpdatePeonWithTaskToOffline(t *testing.T) {
 	})
 
 	if err != nil {
-		t.Errorf("UpdatePeon failed: %v", err)
+		t.Fatalf("UpdatePeon failed: %v", err)
 	}
 
 	if updatedPeon.Status != "OFFLINE" {
-		t.Errorf("Expected status to be OFFLINE, got %s", updatedPeon.Status)
+		t.Fatalf("Expected status to be OFFLINE, got %s", updatedPeon.Status)
 	}
 
 	updatedTask, err = sqls.GetTask(db, task.ID)
 	if err != nil {
-		t.Errorf("GetTask failed: %v", err)
+		t.Fatalf("GetTask failed: %v", err)
 	}
 
 	if updatedTask.Status != "PENDING" {
-		t.Errorf("Expected status to be PENDING, got %s", updatedTask.Status)
+		t.Fatalf("Expected status to be PENDING, got %s", updatedTask.Status)
 	}
 
 	if updatedTask.PeonID != nil {
-		t.Errorf("Expected peon ID to be nil, got %s", *updatedTask.PeonID)
+		t.Fatalf("Expected peon ID to be nil, got %s", *updatedTask.PeonID)
 	}
 
 	updatedPeon, err = sqls.GetPeon(db, peon.ID)
 	if err != nil {
-		t.Errorf("GetPeon failed: %v", err)
+		t.Fatalf("GetPeon failed: %v", err)
 	}
 
 	if updatedPeon.CurrentTask != nil {
-		t.Errorf("Expected current task to be nil, got %s", *updatedPeon.CurrentTask)
+		t.Fatalf("Expected current task to be nil, got %s", *updatedPeon.CurrentTask)
 	}
 
 	q, err := sqls.GetTaskFromQueueByTaskID(db, task.ID)
 	if err != nil {
-		t.Errorf("GetTaskFromQueueByTaskID failed: %v", err)
+		t.Fatalf("GetTaskFromQueueByTaskID failed: %v", err)
 	}
 
 	if q.SentToPeon != false {
-		t.Errorf("Expected SentToPeon to be false, got %v", q.SentToPeon)
+		t.Fatalf("Expected SentToPeon to be false, got %v", q.SentToPeon)
 	}
 }
 
@@ -561,7 +578,7 @@ func TestGetTasksByPeonID(t *testing.T) {
 	p, err := sqls.CreatePeon(db, models.Peon{})
 
 	if err != nil {
-		t.Errorf("CreatePeon failed: %v", err)
+		t.Fatalf("CreatePeon failed: %v", err)
 	}
 
 	task, err := sqls.CreateTask(db, models.Task{
@@ -576,28 +593,28 @@ func TestGetTasksByPeonID(t *testing.T) {
 	})
 
 	if err != nil {
-		t.Errorf("CreateTask failed: %v", err)
+		t.Fatalf("CreateTask failed: %v", err)
 	}
 
 	tasks, err := sqls.GetTasksByPeonID(db, p.ID)
 	if err != nil {
-		t.Errorf("GetTasksByPeonID failed: %v", err)
+		t.Fatalf("GetTasksByPeonID failed: %v", err)
 	}
 
 	if len(tasks) != 1 {
-		t.Errorf("Expected 1 task, got %d", len(tasks))
+		t.Fatalf("Expected 1 task, got %d", len(tasks))
 	}
 
 	if tasks[0].ID != task.ID {
-		t.Errorf("Expected task ID to be %s, got %s", task.ID, tasks[0].ID)
+		t.Fatalf("Expected task ID to be %s, got %s", task.ID, tasks[0].ID)
 	}
 
 	if tasks[0].PeonID == nil {
-		t.Errorf("Expected task PeonID to be %s, got nil", p.ID)
+		t.Fatalf("Expected task PeonID to be %s, got nil", p.ID)
 	}
 
 	if *tasks[0].PeonID != p.ID {
-		t.Errorf("Expected task PeonID to be %s, got %s", p.ID, *tasks[0].PeonID)
+		t.Fatalf("Expected task PeonID to be %s, got %s", p.ID, *tasks[0].PeonID)
 	}
 }
 
@@ -610,12 +627,12 @@ func TestGetIdlePeon(t *testing.T) {
 	})
 
 	if err != nil {
-		t.Errorf("CreatePeon failed: %v", err)
+		t.Fatalf("CreatePeon failed: %v", err)
 	}
 
-	p, err := sqls.GetAvailablePeon(db, "DEFAULT")
+	p, err := sqls.GetAvailablePeon(db, "DEFAULT", nil)
 	if err == nil {
-		t.Errorf("Expected GetAvailablePeon to return error, got nil")
+		t.Fatalf("Expected GetAvailablePeon to return error, got nil")
 	}
 
 	peonStatus := "IDLE"
@@ -625,25 +642,25 @@ func TestGetIdlePeon(t *testing.T) {
 	})
 
 	if err != nil {
-		t.Errorf("UpdatePeon failed: %v", err)
+		t.Fatalf("UpdatePeon failed: %v", err)
 	}
 
-	p, err = sqls.GetAvailablePeon(db, "DEFAULT")
+	p, err = sqls.GetAvailablePeon(db, "DEFAULT", nil)
 
 	if err != nil {
-		t.Errorf("GetAvailablePeon failed: %v", err)
+		t.Fatalf("GetAvailablePeon failed: %v", err)
 	}
 
 	if p.ID == "" {
-		t.Errorf("Expected peon ID to be not empty, got %s", p.ID)
+		t.Fatalf("Expected peon ID to be not empty, got %s", p.ID)
 	}
 
 	if p.Status != "IDLE" {
-		t.Errorf("Expected peon status to be IDLE, got %s", p.Status)
+		t.Fatalf("Expected peon status to be IDLE, got %s", p.Status)
 	}
 
 	if p.ID != updatedPeon.ID {
-		t.Errorf("Expected peon ID to be %s, got %s", updatedPeon.ID, p.ID)
+		t.Fatalf("Expected peon ID to be %s, got %s", updatedPeon.ID, p.ID)
 	}
 
 	peonQueue = "['DEFAULT', 'OTHER']"
@@ -653,44 +670,44 @@ func TestGetIdlePeon(t *testing.T) {
 	})
 
 	if err != nil {
-		t.Errorf("CreatePeon failed: %v", err)
+		t.Fatalf("CreatePeon failed: %v", err)
 	}
 
-	p, err = sqls.GetAvailablePeon(db, "DEFAULT")
+	p, err = sqls.GetAvailablePeon(db, "DEFAULT", nil)
 
 	if err != nil {
-		t.Errorf("GetAvailablePeon failed: %v", err)
+		t.Fatalf("GetAvailablePeon failed: %v", err)
 	}
 
 	if p.ID == "" {
-		t.Errorf("Expected peon ID to be not empty, got %s", p.ID)
+		t.Fatalf("Expected peon ID to be not empty, got %s", p.ID)
 	}
 
 	if p.Status != "IDLE" {
-		t.Errorf("Expected peon status to be IDLE, got %s", p.Status)
+		t.Fatalf("Expected peon status to be IDLE, got %s", p.Status)
 	}
 
-	p, err = sqls.GetAvailablePeon(db, "OTHER")
+	p, err = sqls.GetAvailablePeon(db, "OTHER", nil)
 
 	if err != nil {
-		t.Errorf("GetAvailablePeon failed: %v", err)
+		t.Fatalf("GetAvailablePeon failed: %v", err)
 	}
 
 	if p.ID == "" {
-		t.Errorf("Expected peon ID to be not empty, got %s", p.ID)
+		t.Fatalf("Expected peon ID to be not empty, got %s", p.ID)
 	}
 
 	if p.Status != "IDLE" {
-		t.Errorf("Expected peon status to be IDLE, got %s", p.Status)
+		t.Fatalf("Expected peon status to be IDLE, got %s", p.Status)
 	}
 
-	p, err = sqls.GetAvailablePeon(db, "NON_EXISTENT")
+	p, err = sqls.GetAvailablePeon(db, "NON_EXISTENT", nil)
 
 	if err == nil {
-		t.Errorf("Expected GetAvailablePeon to return error, got nil")
+		t.Fatalf("Expected GetAvailablePeon to return error, got nil")
 	}
 
 	if p.ID != "" {
-		t.Errorf("Expected peon ID to be empty, got %s", p.ID)
+		t.Fatalf("Expected peon ID to be empty, got %s", p.ID)
 	}
 }
