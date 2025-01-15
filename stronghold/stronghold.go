@@ -159,11 +159,10 @@ func (s *Stronghold) SendPendingTasks() {
 	usedPeons := make(map[string]bool)
 
 	for _, task := range tasks {
-		fmt.Println(usedPeons)
 		peon, err := sqls.GetAvailablePeon(s.db, task.Queue, usedPeons)
 		usedPeons[peon.ID] = true
 		if err != nil {
-			slog.Info("Failed to get available peon, skipping. ", "err", err)
+			// slog.Info("Failed to get available peon, skipping. ", "err", err)
 			continue
 		}
 
