@@ -7,7 +7,7 @@ dev:
 	wait
 
 recreate_db:
-	@rm workcraft.db
+	@rm -f workcraft.db
 	@sqlite3 workcraft.db ".databases" ".quit"
 	@echo "Database created"
 

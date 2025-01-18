@@ -13,6 +13,7 @@ import (
 	"github.com/Artur-Galstyan/workcraft-stronghold/models"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Helper function to parse the filter JSON
@@ -419,21 +420,20 @@ func CleanInconsistencies(db *gorm.DB) error {
 			continue
 		}
 
-		// Create queue entry for the task
 		queue := models.Queue{
 			TaskID:     task.ID,
-			SentToPeon: true,
+			SentToPeon: false, // Changed from true to false
 		}
-		if err := tx.Create(&queue).Error; err != nil {
-			return fmt.Errorf("failed to insert into queue: %w", err)
+		if err := tx.Clauses(clause.OnConflict{
+			UpdateAll: true,
+		}).Create(&queue).Error; err != nil {
+			return fmt.Errorf("failed to upsert into queue: %w", err)
 		}
 	}
 
-	// Commit the transaction
 	if err := tx.Commit().Error; err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
-
 	return nil
 }
 

@@ -321,6 +321,9 @@ func UpdateTask(db *gorm.DB, taskID string, partialTask models.TaskUpdate) (mode
 	if partialTask.RetryCountSet {
 		updates["retry_count"] = partialTask.RetryCount
 	}
+	if partialTask.LogsSet {
+		updates["logs"] = partialTask.Logs
+	}
 
 	if len(updates) == 0 {
 		tx.Rollback()
@@ -441,18 +444,6 @@ func GetAvailablePeon(db *gorm.DB, queue string, usedPeons map[string]bool) (mod
 	return peon, nil
 }
 
-func GetAvailablePeons(db *gorm.DB, queue string) ([]models.Peon, error) {
-	var peons []models.Peon
-	result := db.Find(&peons, `status = ? AND queues LIKE ?`,
-		"IDLE",
-		`%'`+queue+`'%`)
-
-	if result.Error != nil {
-		return []models.Peon{}, fmt.Errorf("failed to find available peons: %w", result.Error)
-	}
-	return peons, nil
-}
-
 func CreateStats(db *gorm.DB, stats models.Stats) (models.Stats, error) {
 	result := db.Create(&stats)
 	if result.Error != nil {
@@ -464,8 +455,9 @@ func CreateStats(db *gorm.DB, stats models.Stats) (models.Stats, error) {
 // TODO: Write tests for this function
 func GetNotYetSentOutTasks(db *gorm.DB) ([]models.Task, error) {
 	var tasks []models.Task
-	result := db.Where("status = ? AND id NOT IN (SELECT task_id FROM queues WHERE sent_to_peon = true)",
-		models.TaskStatusPending).
+	result := db.Where("(status = ? AND id NOT IN (SELECT task_id FROM queues WHERE sent_to_peon = true)) OR (status = ? AND retry_on_failure = true AND retry_count < retry_limit)",
+		models.TaskStatusPending,
+		models.TaskStatusFailure).
 		Find(&tasks)
 	if result.Error != nil {
 		return []models.Task{}, fmt.Errorf("failed to get pending tasks: %w", result.Error)

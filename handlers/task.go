@@ -85,6 +85,7 @@ func CreateTaskUpdateHandler(db *gorm.DB, eventSender *events.EventSender) http.
 		_, update.RetryOnFailureSet = rawJSON["retry_on_failure"]
 		_, update.RetryCountSet = rawJSON["retry_count"]
 		_, update.RetryLimitSet = rawJSON["retry_limit"]
+		_, update.LogsSet = rawJSON["logs"]
 
 		updatedTask, err := sqls.UpdateTask(db, taskID, update)
 		if err != nil {
