@@ -18,6 +18,7 @@ import (
 	"github.com/Artur-Galstyan/workcraft-stronghold/views"
 	"github.com/a-h/templ"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type Stronghold struct {
@@ -156,11 +157,14 @@ func (s *Stronghold) SendPendingTasks() {
 		return
 	}
 
+	usedPeons := make(map[string]bool)
+
 	for _, task := range tasks {
-		peon, err := sqls.GetAvailablePeon(s.db, task.Queue)
+		peon, err := sqls.GetAvailablePeon(s.db, task.Queue, usedPeons)
+		usedPeons[peon.ID] = true
 		if err != nil {
-			slog.Info("Failed to get available peon, skipping. ", "err", err)
-			return
+			// slog.Info("Failed to get available peon, skipping. ", "err", err)
+			continue
 		}
 
 		taskJSON, err := json.Marshal(task)
@@ -176,15 +180,22 @@ func (s *Stronghold) SendPendingTasks() {
 
 func (s *Stronghold) PutPendingTasksIntoQueue() {
 	var pendingTasks []models.Task
-	err := s.db.Where("status = ? AND id NOT IN (SELECT task_id FROM queues)",
-		models.TaskStatusPending).
-		Find(&pendingTasks).Error
+	err := s.db.Where(
+		`(
+    (status = 'PENDING' AND id NOT IN (SELECT task_id FROM queues WHERE sent_to_peon = true))
+    OR
+    (
+        status = 'FAILURE'
+        AND retry_on_failure = true
+        AND retry_count < retry_limit
+    )
+)`,
+	).Find(&pendingTasks).Error
 
 	if err != nil {
-		slog.Error("Failed to get pending tasks", "err", err)
+		slog.Error("Failed to get tasks to process", "err", err)
 		return
 	}
-
 	if len(pendingTasks) == 0 {
 		return
 	}
@@ -201,9 +212,18 @@ func (s *Stronghold) PutPendingTasksIntoQueue() {
 			TaskID:     task.ID,
 			SentToPeon: false,
 		}
-		if err := tx.Create(&queue).Error; err != nil {
-			slog.Error("Failed to insert task into queue", "taskID", task.ID, "err", err)
+		if err := tx.Clauses(clause.OnConflict{
+			UpdateAll: true,
+		}).Create(&queue).Error; err != nil {
+			slog.Error("Failed to upsert task into queue", "taskID", task.ID, "err", err)
 			return
+		}
+
+		if task.Status == models.TaskStatusFailure {
+			if err := tx.Model(&task).Update("retry_count", task.RetryCount+1).Error; err != nil {
+				slog.Error("Failed to increment retry count", "taskID", task.ID, "err", err)
+				return
+			}
 		}
 	}
 

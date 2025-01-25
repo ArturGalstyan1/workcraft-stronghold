@@ -3,17 +3,19 @@ package database
 import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 var DB *gorm.DB
 
 func InitDB() {
 	dbName := "workcraft.db?_journal_mode=WAL&_synchronous=NORMAL"
-	db, err := gorm.Open(sqlite.Open(dbName), &gorm.Config{})
-	if err != nil {
-		panic(err)
+
+	config := &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent), // or logger.Error if you want error logs
 	}
 
+	db, err := gorm.Open(sqlite.Open(dbName), config)
 	if err != nil {
 		panic(err)
 	}

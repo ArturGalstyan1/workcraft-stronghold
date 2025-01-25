@@ -35,6 +35,7 @@ type Task struct {
 	RetryLimit     int         `json:"retry_limit"`
 	Payload        TaskPayload `json:"payload" gorm:"-"`
 	Result         interface{} `json:"result" gorm:"-"`
+	Logs           *string     `json:"logs" gorm:"type:text"`
 }
 
 type Stats struct {
@@ -84,6 +85,8 @@ type TaskUpdate struct {
 	RetryCountSet     bool         `json:"-"`
 	RetryLimit        *int         `json:"retry_limit,omitempty" db:"retry_limit"`
 	RetryLimitSet     bool         `json:"-"`
+	Logs              *string      `json:"logs,omitempty" db:"logs"`
+	LogsSet           bool         `json:"-"`
 }
 
 type SSEMessage struct {
