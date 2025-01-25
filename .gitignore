@@ -3,3 +3,6 @@ node_modules/
 *_templ.go
 tmp/
 workcraft.db
+workcraft.db
+database/workcraft.db
+bin/.env

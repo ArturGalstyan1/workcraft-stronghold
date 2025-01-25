@@ -1,37 +1,36 @@
-package main
+package migrations
 
 import (
 	"log/slog"
 
-	"github.com/Artur-Galstyan/workcraft-stronghold/database"
 	"github.com/Artur-Galstyan/workcraft-stronghold/models"
+	"gorm.io/gorm"
 )
 
-func main() {
-	database.InitDB()
-	var err error
-	err = database.DB.AutoMigrate(&models.Peon{})
-	if err != nil {
-		panic(err)
+func Migrate(db *gorm.DB) error {
+	// Migrate Peon model
+	if err := db.AutoMigrate(&models.Peon{}); err != nil {
+		return err
 	}
 	slog.Info("Peon model migrated")
 
-	err = database.DB.AutoMigrate(&models.Task{})
-	if err != nil {
-		panic(err)
+	// Migrate Task model
+	if err := db.AutoMigrate(&models.Task{}); err != nil {
+		return err
 	}
 	slog.Info("Task model migrated")
 
-	err = database.DB.AutoMigrate(&models.Stats{})
-	if err != nil {
-		panic(err)
+	// Migrate Stats model
+	if err := db.AutoMigrate(&models.Stats{}); err != nil {
+		return err
 	}
 	slog.Info("Stats model migrated")
 
-	err = database.DB.AutoMigrate(&models.Queue{})
-	if err != nil {
-		panic(err)
+	// Migrate Queue model
+	if err := db.AutoMigrate(&models.Queue{}); err != nil {
+		return err
 	}
 	slog.Info("Queue model migrated")
 
+	return nil
 }

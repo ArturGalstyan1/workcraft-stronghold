@@ -14,6 +14,7 @@ import (
 	"github.com/Artur-Galstyan/workcraft-stronghold/handlers"
 	"github.com/Artur-Galstyan/workcraft-stronghold/models"
 	"github.com/Artur-Galstyan/workcraft-stronghold/sqls"
+	"github.com/Artur-Galstyan/workcraft-stronghold/static"
 	"github.com/Artur-Galstyan/workcraft-stronghold/utils"
 	"github.com/Artur-Galstyan/workcraft-stronghold/views"
 	"github.com/a-h/templ"
@@ -88,8 +89,8 @@ func (s *Stronghold) Run() {
 }
 
 func (s *Stronghold) StartHTTPServer() {
-	fs := http.FileServer(http.Dir("static"))
-	http.Handle("/static/", http.StripPrefix("/static/", fs))
+	fs := http.FileServer(static.GetFileSystem())
+	http.Handle("/static/css/", http.StripPrefix("/static/css/", fs))
 
 	component := views.Index()
 	http.Handle("/", templ.Handler(component))
