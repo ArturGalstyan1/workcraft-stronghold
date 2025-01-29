@@ -1,12 +1,19 @@
 package utils
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/Artur-Galstyan/workcraft-stronghold/models"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Helper function to parse the filter JSON
@@ -206,9 +213,9 @@ func BuildTaskQuery(filter *models.TaskFilter) (string, []interface{}, error) {
 		args = append(args, filter.Queue.Value)
 	}
 
-	if filter.PeonId != nil {
+	if filter.PeonID != nil {
 		query += " AND peon_id = ?"
-		args = append(args, filter.PeonId.Value)
+		args = append(args, filter.PeonID.Value)
 	}
 
 	return query, args, nil
@@ -340,4 +347,119 @@ func ParsePeonQuery(queryJSON string) (*models.PeonQuery, error) {
 	}
 
 	return &query, nil
+}
+
+func GenerateUUID() string {
+	b := make([]byte, 16)
+	_, err := rand.Read(b)
+	if err != nil {
+		return ""
+	}
+	return hex.EncodeToString(b)
+}
+func ApplyFilterCondition(query *gorm.DB, field string, condition *models.FilterCondition) *gorm.DB {
+	if condition == nil || query == nil {
+		return query
+	}
+
+	switch condition.Op {
+	case models.FilterOpEquals:
+		return query.Where(field+" = ?", condition.Value)
+	case models.FilterOpGreater:
+		return query.Where(field+" > ?", condition.Value)
+	case models.FilterOpLess:
+		return query.Where(field+" < ?", condition.Value)
+	case models.FilterOpGreaterEq:
+		return query.Where(field+" >= ?", condition.Value)
+	case models.FilterOpLessEq:
+		return query.Where(field+" <= ?", condition.Value)
+	case models.FilterOpIn:
+		if condition.Value == nil {
+			return query
+		}
+		return query.Where(field+" IN (?)", condition.Value)
+	case models.FilterOpNotIn:
+		if condition.Value == nil {
+			return query
+		}
+		return query.Where(field+" NOT IN (?)", condition.Value)
+	default:
+		slog.Warn("Unsupported filter operator", "operator", condition.Op)
+		return query
+	}
+}
+
+func CleanInconsistencies(db *gorm.DB) error {
+	// Start a transaction
+	tx := db.Begin()
+	if tx.Error != nil {
+		return fmt.Errorf("failed to start transaction: %w", tx.Error)
+	}
+	defer tx.Rollback()
+
+	// Get all tasks that are in RUNNING state with offline peons
+	var inconsistentTasks []models.Task
+	if err := tx.Model(&models.Task{}).
+		Where("status = ? AND peon_id IN (SELECT id FROM peons WHERE status = ?)",
+			models.TaskStatusRunning, "OFFLINE").
+		Select("id").
+		Find(&inconsistentTasks).Error; err != nil {
+		return fmt.Errorf("failed to find inconsistent tasks: %w", err)
+	}
+
+	// For each inconsistent task
+	for _, task := range inconsistentTasks {
+		// Update task status and clear peon_id
+		if err := tx.Model(&models.Task{}).
+			Where("id = ?", task.ID).
+			Updates(map[string]interface{}{
+				"status":  models.TaskStatusPending,
+				"peon_id": nil,
+			}).Error; err != nil {
+			slog.Error("Failed to update task status", "taskID", task.ID, "err", err)
+			continue
+		}
+
+		queue := models.Queue{
+			TaskID:     task.ID,
+			SentToPeon: false, // Changed from true to false
+		}
+		if err := tx.Clauses(clause.OnConflict{
+			UpdateAll: true,
+		}).Create(&queue).Error; err != nil {
+			return fmt.Errorf("failed to upsert into queue: %w", err)
+		}
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+	return nil
+}
+
+func GetDB() (*gorm.DB, func()) {
+	uuidString := GenerateUUID()
+	path := fmt.Sprintf("stronghold-%s.db", uuidString)
+
+	cleanup := func() {
+		slog.Info("Deleting temporary database file", "path", path)
+		if err := os.Remove(path); err != nil {
+			slog.Error("Failed to delete temporary database file", "path", path, "error", err)
+		}
+	}
+
+	db, err := gorm.Open(sqlite.Open(path), &gorm.Config{})
+	if err != nil {
+		panic(err)
+	}
+	err = db.AutoMigrate(
+		&models.Peon{},
+		&models.Task{},
+		&models.Stats{},
+		&models.Queue{},
+	)
+	if err != nil {
+		panic(err)
+	}
+	return db, cleanup
 }

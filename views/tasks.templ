@@ -1,0 +1,248 @@
+package views
+
+import "github.com/Artur-Galstyan/workcraft-stronghold/views/layout"
+
+templ Tasks() {
+	@layout.Base() {
+		<script defer>
+            let totalPages = 0;
+            let currentPage = 0;
+            const sse = window.getSSE();
+            console.log('No socket, reconnecting');
+            sse.onopen = function() {
+                console.log('Connected');
+                reconnectAttempts = 0;
+            };
+            sse.onmessage = function(e) {
+                const data = JSON.parse(e.data);
+                if (data.type === 'task_update') {
+                    updateTaskRow(data.message.task);
+                }
+            };
+            sse.onerror = function(error) {
+                console.error('WebSocket error:', error);
+            };
+
+            function getStatusClass(status) {
+                return window.getStatusColor(status);
+            }
+
+            function updateTaskRow(task) {
+                const row = document.getElementById(`task-${task.id}`);
+                if (!row) {
+                    return;
+                }
+
+                const createdAt = new Date(task.created_at).toLocaleString('en-US', {
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit'
+                });
+
+                row.innerHTML = `
+                    <td class="px-4 py-3 border-b">
+                        <a href="/task/${task.id}" class="text-blue-600 hover:underline">
+                            ${task.id}
+                        </a>
+                    </td>
+                    <td class="px-4 py-3 border-b">
+                        <span class="px-2 py-1 rounded-full text-sm inline-block ${window.getStatusColor(task.status)}">
+                            ${task.status}
+                        </span>
+                    </td>
+                    <td class="px-4 py-3 border-b font-mono text-sm">${task.task_name}</td>
+                    <td class="px-4 py-3 border-b">${createdAt}</td>
+                    <td class="px-4 py-3 border-b">${task.queue || 'DEFAULT'}</td>
+                    <td class="px-4 py-3 border-b">
+                        ${task.peon_id ?
+                            `<a href="/peon/${task.peon_id}" class="text-blue-600 hover:underline">
+                                ${task.peon_id}
+                            </a>` :
+                            '<span class="text-gray-500">Not assigned</span>'
+                        }
+                    </td>
+                `;
+            }
+            async function pollTaskData() {
+                try {
+                    const queryParams = new URLSearchParams(window.location.search);
+                    currentPage = parseInt(queryParams.get('page')) || 0;
+
+                    const query = {
+                        page: currentPage,
+                        per_page: parseInt(queryParams.get('per_page')) || 30,
+                        order: {
+                            field: queryParams.get('sort') || 'created_at',
+                            dir: queryParams.get('dir') || 'DESC'
+                        }
+                    };
+
+                    const response = await fetch(`/api/tasks?query=${JSON.stringify(query)}`);
+                    if (!response.ok) throw new Error('Failed to fetch task data');
+                    const data = await response.json();
+                    totalPages = data.total_pages;
+                    updateTaskTable(data.items);
+                    updatePaginationButtons();
+                } catch (error) {
+                    console.error('Error polling task data:', error);
+                }
+            }
+
+            function updateTaskTable(tasks) {
+                const tbody = document.getElementById('tasks-table');
+                tbody.innerHTML = '';
+
+                if (tasks.length === 0) {
+                    tbody.innerHTML = `
+                        <tr>
+                            <td colspan="6" class="text-center py-4 text-gray-500">
+                                No tasks found
+                            </td>
+                        </tr>
+                    `;
+                    return;
+                }
+
+                tasks.forEach(task => {
+                    const row = document.createElement('tr');
+                    row.id = `task-${task.id}`;
+                    row.className = 'hover:bg-gray-50';
+                    const createdAt = new Date(task.created_at).toLocaleString('en-US', {
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit'
+                    });
+
+                    row.innerHTML = `
+                        <td class="px-4 py-3 border-b">
+                            <a href="/task/${task.id}" class="text-blue-600 hover:underline">
+                                ${task.id}
+                            </a>
+                        </td>
+                        <td class="px-4 py-3 border-b">
+                            <span class="px-2 py-1 rounded-full text-sm inline-block ${getStatusClass(task.status)}">
+                                ${task.status}
+                            </span>
+                        </td>
+                        <td class="px-4 py-3 border-b">${task.task_name}</td>
+                        <td class="px-4 py-3 border-b">${createdAt}</td>
+                        <td class="px-4 py-3 border-b">${task.queue}</td>
+                        <td class="px-4 py-3 border-b">
+                            ${task.peon_id ?
+                                `<a href="/peon/${task.peon_id}" class="text-blue-600 hover:underline">
+                                    ${task.peon_id}
+                                </a>` :
+                                '<span class="text-gray-500">Not assigned</span>'
+                            }
+                        </td>
+                    `;
+                    tbody.appendChild(row);
+                });
+            }
+
+            function updatePaginationButtons() {
+                const prevButton = document.querySelector('button[onclick="prevPage()"]');
+                const nextButton = document.querySelector('button[onclick="nextPage()"]');
+
+                if (prevButton) {
+                    prevButton.disabled = currentPage <= 0;
+                }
+                if (nextButton) {
+                    nextButton.disabled = currentPage >= totalPages - 1;
+                }
+            }
+
+            async function joinPage(page) {
+                if (page < 0 || page >= totalPages) {
+                    return;
+                }
+
+                const queryParams = new URLSearchParams(window.location.search);
+                queryParams.set('page', page);
+
+                window.history.pushState(
+                    { page },
+                    '',
+                    `${window.location.pathname}?${queryParams.toString()}`
+                );
+
+                currentPage = page;
+                await pollTaskData();
+            }
+
+            async function prevPage() {
+                if (currentPage > 0) {
+                    await joinPage(currentPage - 1);
+                }
+            }
+
+            async function nextPage() {
+                if (currentPage < totalPages - 1) {
+                    await joinPage(currentPage + 1);
+                }
+            }
+
+            window.addEventListener('popstate', async (event) => {
+                await pollTaskData();
+            });
+
+            $(document).ready(async function() {
+                console.log('Document ready');
+                await pollTaskData();
+                setInterval(pollTaskData, 5000);
+            });
+        </script>
+		<div class="max-w-6xl mx-auto p-6">
+			<div class="bg-gray-50 rounded-lg shadow-sm border border-gray-200 p-6">
+				<div class="flex justify-between items-center mb-6">
+					<h1 class="text-2xl font-bold text-gray-700">All Tasks</h1>
+					<div class="flex">
+						<div class="join grid grid-cols-2">
+							<button onclick="prevPage()" class="join-item btn btn-outline">Previous page</button>
+							<button onclick="nextPage()" class="join-item btn btn-outline">Next</button>
+						</div>
+					</div>
+				</div>
+				<div class="overflow-x-auto">
+					<table class="min-w-full">
+						<thead class="bg-gray-100">
+							<tr>
+								<th class="px-4 py-3 text-left text-sm font-semibold text-gray-900 border-b">
+									Task ID
+								</th>
+								<th class="px-4 py-3 text-left text-sm font-semibold text-gray-900 border-b">
+									Status
+								</th>
+								<th class="px-4 py-3 text-left text-sm font-semibold text-gray-900 border-b">
+									Task Name
+								</th>
+								<th class="px-4 py-3 text-left text-sm font-semibold text-gray-900 border-b">
+									Created At
+								</th>
+								<th class="px-4 py-3 text-left text-sm font-semibold text-gray-900 border-b">
+									Queue
+								</th>
+								<th class="px-4 py-3 text-left text-sm font-semibold text-gray-900 border-b">
+									Assigned To
+								</th>
+							</tr>
+						</thead>
+						<tbody id="tasks-table">
+							<tr>
+								<td colspan="6" class="text-center py-4 text-gray-500">
+									Loading...
+								</td>
+							</tr>
+						</tbody>
+					</table>
+				</div>
+			</div>
+		</div>
+	}
+}

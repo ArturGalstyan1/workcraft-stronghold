@@ -1,0 +1,156 @@
+package views
+
+templ CloneTaskModal() {
+	<div>
+		<button onclick="cloneTaskModal.showModal()" class="btn btn-primary">
+			Clone Task
+		</button>
+		<dialog id="cloneTaskModal" class="modal">
+			<div class="modal-box max-w-2xl">
+				<h3 class="text-lg font-bold mb-4">Clone Task</h3>
+				<form id="clone-task-form" class="space-y-4">
+					<div class="form-control w-full">
+						<label class="label">
+							<span class="label-text">Task Name</span>
+						</label>
+						<input
+							type="text"
+							name="taskName"
+							id="clone-task-name"
+							class="input input-bordered w-full"
+							required
+						/>
+					</div>
+					<div class="form-control w-full">
+						<label class="label">
+							<span class="label-text">Queue</span>
+						</label>
+						<input
+							type="text"
+							name="queue"
+							id="clone-task-queue"
+							class="input input-bordered w-full"
+						/>
+					</div>
+					<div class="form-control w-full">
+						<label class="label">
+							<span class="label-text">Payload (JSON)</span>
+						</label>
+						<textarea
+							name="payload"
+							id="clone-task-payload"
+							class="textarea textarea-bordered font-mono h-48"
+							required
+						></textarea>
+					</div>
+					<div class="form-control">
+						<label class="label cursor-pointer">
+							<span class="label-text">Retry on Failure</span>
+							<input type="checkbox" name="retryOnFailure" id="clone-task-retry" class="checkbox"/>
+						</label>
+					</div>
+					<div class="form-control w-full">
+						<label class="label">
+							<span class="label-text">Retry Limit</span>
+						</label>
+						<input
+							type="number"
+							name="retryLimit"
+							id="clone-task-retry-limit"
+							class="input input-bordered w-full"
+							min="0"
+							value="0"
+						/>
+					</div>
+					<div class="modal-action">
+						<button type="submit" class="btn btn-primary">Create Task</button>
+						<button type="button" class="btn" onclick="cloneTaskModal.close()">Cancel</button>
+					</div>
+				</form>
+			</div>
+			<form method="dialog" class="modal-backdrop">
+				<button>close</button>
+			</form>
+		</dialog>
+		<script defer>
+        $(document).ready(async function() {
+          const $modal = $('#cloneTaskModal');
+          const $form = $('#clone-task-form');
+          const taskID = JSON.parse($('#taskID').text());
+
+          const currentTaskReq = await fetch(`/api/task/${taskID}`)
+
+          if (!currentTaskReq.ok) {
+            window.Toast.fire({
+              icon: "error",
+              title: "Failed to load task data"
+            });
+            return;
+          }
+
+          const currentTask = await currentTaskReq.json();
+          if (!currentTask || currentTask.error) {
+            window.Toast.fire({
+              icon: "error",
+              title: "Failed to load task data"
+            });
+            return;
+          }
+          console.log(currentTask);
+          $('#clone-task-name').val(currentTask.task_name || '');
+          $('#clone-task-queue').val(currentTask.queue || 'DEFAULT');
+          $('#clone-task-payload').val(JSON.stringify(currentTask.payload || {}, null, 2));
+          $('#clone-task-retry').prop('checked', currentTask.retry_on_failure || false);
+          $('#clone-task-retry-limit').val(currentTask.retry_limit || 0);
+
+          $form.on('submit', async function(e) {
+            e.preventDefault();
+
+            try {
+              // Validate JSON payload
+              const payload = JSON.parse($('#clone-task-payload').val());
+              const randomUUID = window.getUUID();
+              // Prepare task data
+              const taskData = {
+                id: randomUUID,
+                task_name: $('#clone-task-name').val(),
+                queue: $('#clone-task-queue').val(),
+                payload: payload,
+                retry_on_failure: $('#clone-task-retry').is(':checked'),
+                retry_limit: parseInt($('#clone-task-retry-limit').val())
+              };
+
+              // Create new task
+              const newTaskReq = await fetch('/api/task', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(taskData)
+              });
+
+              if (!newTaskReq.ok) {
+                showError('Failed to create task: ' + await newTaskReq.text());
+                return;
+              }
+
+              const newTask = await newTaskReq.json();
+              window.Toast.fire({
+                icon: "success",
+                title: "Task created!"
+              });
+
+              // Close modal
+              $modal[0].close();
+
+              // Redirect to new task
+              window.location.href = `/task/${newTask.id}`;
+
+            } catch (err) {
+              showError('Invalid JSON payload: ' + err.message);
+            }
+          });
+        });
+      </script>
+	</div>
+}

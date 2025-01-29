@@ -1,14 +1,15 @@
 root = "."
 tmp_dir = "tmp"
-
 [build]
-cmd = "templ generate && go build -o ./tmp/main ."
+# First kill any existing process, then generate templates, then build
+cmd = """
+pkill -f './tmp/main' || true &&
+templ generate &&
+go build -o ./tmp/main ."""
 bin = "./tmp/main"
 include_ext = ["go", "templ"]
 exclude_dir = ["tmp", "vendor", "node_modules"]
 exclude_file = []
-# Add this to ignore the generated files
 exclude_regex = ["_templ\\.go$"]
-
 [misc]
 clean_on_exit = true
