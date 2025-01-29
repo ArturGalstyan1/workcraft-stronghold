@@ -13,6 +13,12 @@ import (
 
 var apiKey string
 
+var (
+	Version    = "dev"
+	BuildDate  = "unknown"
+	CommitHash = "unknown"
+)
+
 func init() {
 	if err := godotenv.Load(); err != nil {
 		log.Fatal("Error loading .env file")
@@ -25,6 +31,8 @@ func init() {
 }
 
 func main() {
+	log.Printf("Version: %s, Build Date: %s, Commit: %s\n", Version, BuildDate, CommitHash)
+
 	database.InitDB()
 	eventSender := events.NewEventSender()
 
