@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"log/slog"
 	"os"
 
 	"github.com/Artur-Galstyan/workcraft-stronghold/database"
@@ -25,8 +26,9 @@ func init() {
 	chieftainPass := os.Getenv("WORKCRAFT_CHIEFTAIN_PASS")
 
 	if apiKey == "" || chieftainUser == "" || chieftainPass == "" {
+		slog.Info("Loading environment variables from .env file, if present")
 		if err := godotenv.Load(); err != nil {
-			log.Println("No .env file found - checking environment variables")
+			slog.Info("No .env file found - checking environment variables")
 		}
 
 		apiKey = os.Getenv("WORKCRAFT_API_KEY")
@@ -34,13 +36,18 @@ func init() {
 		chieftainPass = os.Getenv("WORKCRAFT_CHIEFTAIN_PASS")
 
 		if apiKey == "" {
-			log.Fatal("WORKCRAFT_API_KEY not set in environment or .env file")
+			slog.Error("WORKCRAFT_API_KEY not set in environment or .env file")
 		}
 		if chieftainUser == "" {
-			log.Fatal("WORKCRAFT_CHIEFTAIN_USER not set in environment or .env file")
+			slog.Error("WORKCRAFT_CHIEFTAIN_USER not set in environment or .env file")
 		}
 		if chieftainPass == "" {
-			log.Fatal("WORKCRAFT_CHIEFTAIN_PASS not set in environment or .env file")
+			slog.Error("WORKCRAFT_CHIEFTAIN_PASS not set in environment or .env file")
+		}
+
+		if apiKey == "" || chieftainUser == "" || chieftainPass == "" {
+			slog.Error("Missing required environment variables")
+			os.Exit(1)
 		}
 	}
 }
