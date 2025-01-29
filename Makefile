@@ -1,4 +1,9 @@
-.PHONY: dev build-mac build-linux clean recreate_db clear_db build-css
+.PHONY: dev build-mac build-linux clean recreate_db clear_db build-css templ
+
+# Generate TEMPL files
+templ:
+	@echo "Generating TEMPL files..."
+	@templ generate
 
 # Development commands
 dev:
@@ -13,12 +18,12 @@ build-css:
 	@npx tailwindcss -i ./static/css/input.css -o ./static/css/output.css --minify
 
 # Build commands
-build-mac: build-css
+build-mac: build-css templ
 	@echo "Building for Mac..."
 	@GOOS=darwin GOARCH=amd64 go build -o bin/workcraft-mac-amd64
 	@GOOS=darwin GOARCH=arm64 go build -o bin/workcraft-mac-arm64
 
-build-linux: build-css
+build-linux: build-css templ
 	@echo "Building for Linux..."
 	@GOOS=linux GOARCH=amd64 go build -o bin/workcraft-linux-amd64
 
