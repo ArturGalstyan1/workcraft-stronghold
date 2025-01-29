@@ -20,13 +20,28 @@ var (
 )
 
 func init() {
-	if err := godotenv.Load(); err != nil {
-		log.Fatal("Error loading .env file")
-	}
-
 	apiKey = os.Getenv("WORKCRAFT_API_KEY")
-	if apiKey == "" {
-		log.Fatal("WORKCRAFT_API_KEY not set in environment")
+	chieftainUser := os.Getenv("WORKCRAFT_CHIEFTAIN_USER")
+	chieftainPass := os.Getenv("WORKCRAFT_CHIEFTAIN_PASS")
+
+	if apiKey == "" || chieftainUser == "" || chieftainPass == "" {
+		if err := godotenv.Load(); err != nil {
+			log.Println("No .env file found - checking environment variables")
+		}
+
+		apiKey = os.Getenv("WORKCRAFT_API_KEY")
+		chieftainUser = os.Getenv("WORKCRAFT_CHIEFTAIN_USER")
+		chieftainPass = os.Getenv("WORKCRAFT_CHIEFTAIN_PASS")
+
+		if apiKey == "" {
+			log.Fatal("WORKCRAFT_API_KEY not set in environment or .env file")
+		}
+		if chieftainUser == "" {
+			log.Fatal("WORKCRAFT_CHIEFTAIN_USER not set in environment or .env file")
+		}
+		if chieftainPass == "" {
+			log.Fatal("WORKCRAFT_CHIEFTAIN_PASS not set in environment or .env file")
+		}
 	}
 }
 
