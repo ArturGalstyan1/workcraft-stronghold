@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/Artur-Galstyan/workcraft-stronghold/migrations"
-	"gorm.io/driver/sqlite"
+	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
