@@ -66,6 +66,7 @@ func CreateSSEHandler(eventSender *events.EventSender, db *gorm.DB) http.Handler
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no")
 
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
