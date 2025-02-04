@@ -123,6 +123,7 @@ func (s *Stronghold) StartHTTPServer() {
 	http.HandleFunc("POST /api/task/{id}/cancel", handlers.AuthMiddleware(handlers.CreateCancelTaskHandler(s.db, s.eventSender), s.hashedAPIKey))
 	http.HandleFunc("POST /api/task/{id}/update", handlers.AuthMiddleware(handlers.CreateTaskUpdateHandler(s.db, s.eventSender), s.hashedAPIKey))
 	http.HandleFunc("GET /api/test", handlers.AuthMiddleware(createTestHandler(s.eventSender), s.hashedAPIKey))
+	http.HandleFunc("GET /api/db_dump", handlers.AuthMiddleware(handlers.DumpDatabaseHandler, s.hashedAPIKey))
 	http.HandleFunc("GET /api/heartbeat", heartbeatHandler())
 	http.HandleFunc("/events", handlers.AuthMiddleware(handlers.CreateSSEHandler(s.eventSender, s.db), s.hashedAPIKey))
 
@@ -164,7 +165,7 @@ func (s *Stronghold) SendPendingTasks() {
 		peon, err := sqls.GetAvailablePeon(s.db, task.Queue, usedPeons)
 		usedPeons[peon.ID] = true
 		if err != nil {
-			// slog.Info("Failed to get available peon, skipping. ", "err", err)
+			slog.Info("Failed to get available peon, skipping. ", "err", err)
 			continue
 		}
 

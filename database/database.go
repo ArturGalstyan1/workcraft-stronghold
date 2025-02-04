@@ -12,13 +12,13 @@ import (
 )
 
 //go:embed workcraft.db
-var embeddedDB embed.FS
-
+var Embedded embed.FS
 var DB *gorm.DB
+var DBPath string
 
 func InitDB() {
 	// Extract embedded database to a temporary file
-	dbBytes, err := embeddedDB.ReadFile("workcraft.db")
+	dbBytes, err := Embedded.ReadFile("workcraft.db")
 	if err != nil {
 		panic(err)
 	}
@@ -28,12 +28,12 @@ func InitDB() {
 		panic(err)
 	}
 
-	dbPath := filepath.Join(tempDir, "workcraft.db")
-	if err := os.WriteFile(dbPath, dbBytes, 0600); err != nil {
+	DBPath = filepath.Join(tempDir, "workcraft.db")
+	if err := os.WriteFile(DBPath, dbBytes, 0600); err != nil {
 		panic(err)
 	}
 
-	dbName := dbPath + "?_journal_mode=WAL&_synchronous=NORMAL"
+	dbName := DBPath + "?_journal_mode=WAL&_synchronous=NORMAL"
 	config := &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
 	}
