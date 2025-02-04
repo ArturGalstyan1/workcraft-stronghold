@@ -180,6 +180,11 @@ func (s *Stronghold) SendPendingTasks() {
 	}
 }
 
+func (s *Stronghold) SendHeartbeatToPeons() {
+	msgJSON := fmt.Sprintf("{\"type\": \"heartbeat\", \"msg\": \"%s\"}", "We need more burrows!")
+	s.eventSender.BroadcastToPeons(msgJSON)
+}
+
 func (s *Stronghold) PutPendingTasksIntoQueue() {
 	var pendingTasks []models.Task
 	err := s.db.Where(
@@ -242,6 +247,7 @@ func (s *Stronghold) SendPendingTasksInterval() {
 		case <-ticker.C:
 			s.PutPendingTasksIntoQueue()
 			s.SendPendingTasks()
+			s.SendHeartbeatToPeons()
 		}
 	}
 }
