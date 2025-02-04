@@ -53,22 +53,18 @@ func (s *EventSender) SendEvent(ID string, msg string) error {
 }
 
 func (s *EventSender) BroadcastToPeons(msg string) {
-
 	for id := range s.connections {
-
-		if strings.HasPrefix(id, "peon-") {
-			w := s.connections[id]
-			rc := s.controllers[id]
-			_, err := fmt.Fprintf(w, "data: %s\n\n", msg)
-			if err != nil {
-				slog.Error("Failed to write to writer", "err", err)
-				continue
-			}
-			err = rc.Flush()
-			if err != nil {
-				slog.Error("Failed to flush writer", "err", err)
-				continue
-			}
+		w := s.connections[id]
+		rc := s.controllers[id]
+		_, err := fmt.Fprintf(w, "data: %s\n\n", msg)
+		if err != nil {
+			slog.Error("Failed to write to writer", "err", err)
+			continue
+		}
+		err = rc.Flush()
+		if err != nil {
+			slog.Error("Failed to flush writer", "err", err)
+			continue
 		}
 
 	}
