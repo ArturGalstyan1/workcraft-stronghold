@@ -1,0 +1,157 @@
+package views
+
+import "github.com/Artur-Galstyan/workcraft-stronghold/views/layout"
+
+templ DBData() {
+	@layout.Base() {
+		<script defer>
+		function downloadDB() {
+			const progressBar = document.getElementById("progress")
+			if (progressBar !== null) {
+				progressBar.classList.remove("hidden");
+			}
+			window.location.href = '/api/db/dump/sqlite';
+			if (progressBar !== null) {
+				progressBar.classList.add("hidden");
+			}
+		}
+
+		function downloadCSV() {
+			const progressBar = document.getElementById("progress")
+			if (progressBar !== null) {
+				progressBar.classList.remove("hidden");
+			}
+			window.location.href = '/api/db/dump/csv';
+			if (progressBar !== null) {
+				progressBar.classList.add("hidden");
+			}
+		}
+
+		async function handleFileUpload(event) {
+			event.preventDefault();
+			const fileInput = document.getElementById('csvFile');
+			const file = fileInput.files[0];
+
+			if (!file) {
+				window.Toast.fire({
+					icon: "error",
+					title: "Please select a file first"
+				});
+				return;
+			}
+
+			const formData = new FormData();
+			formData.append('file', file);
+
+			const progressBar = document.getElementById("progress")
+			try {
+				if (progressBar !== null) {
+					progressBar.classList.remove("hidden");
+				}
+				const response = await fetch('/api/db/import/csv', {
+					method: 'POST',
+					body: formData
+				});
+
+				const result = await response.json();
+
+				if (response.ok) {
+					window.Toast.fire({
+						icon: "success",
+						title: `Successfully imported ${result.success_count} out of ${result.total_rows} rows`
+					});
+
+					if (result.failed_rows.length > 0) {
+						const failedDetails = result.failed_rows.map(row =>
+							`Row ${row.row_number}: ${row.error}`
+						).join('\n');
+
+						console.error('Failed rows:', failedDetails);
+
+						// Show modal with failed rows
+						document.getElementById('failedRowsContent').textContent = failedDetails;
+						document.getElementById('failedRowsModal').classList.remove('hidden');
+					}
+				} else {
+					throw new Error(result.message || 'Import failed');
+				}
+			} catch (error) {
+				console.error('Import error:', error);
+				window.Toast.fire({
+					icon: "error",
+					title: "Import failed: " + error.message
+				});
+			}
+			if (progressBar !== null) {
+				progressBar.classList.add("hidden");
+			}
+			// Clear the file input
+			fileInput.value = '';
+		}
+
+		function closeModal() {
+			document.getElementById('failedRowsModal').classList.add('hidden');
+		}
+		</script>
+		<div class="max-w-4xl mx-auto p-6">
+			<!-- Export Section -->
+			<div class="bg-gray-50 rounded-lg shadow-sm border border-gray-200 p-6 mb-8">
+				<h2 class="text-xl font-bold mb-6 text-gray-700">Export Database</h2>
+				<div class="flex space-x-4 justify-between">
+					<div class="flex flex-col gap-2">
+						<span class="text-sm text-gray-600">Download database backup file:</span>
+						<button onclick="downloadDB()" class="btn btn-primary w-fit">
+							Export as SQLite
+						</button>
+					</div>
+					<div class="flex flex-col gap-2">
+						<span class="text-sm text-gray-600">Download tasks as CSV:</span>
+						<button onclick="downloadCSV()" class="btn btn-primary w-fit">
+							Export as CSV
+						</button>
+					</div>
+				</div>
+			</div>
+			<!-- Import Section -->
+			<div class="bg-gray-50 rounded-lg shadow-sm border border-gray-200 p-6">
+				<h2 class="text-xl font-bold mb-6 text-gray-700">Import Data</h2>
+				<form onsubmit="handleFileUpload(event)" class="flex space-x-12 w-full">
+					<div class="flex flex-col gap-y-2 my-auto">
+						<label for="csvFile" class="text-sm text-gray-600">
+							Select CSV file to import:
+						</label>
+						<input
+							type="file"
+							id="csvFile"
+							accept=".csv"
+							class="file-input file-input-bordered w-full max-w-xs"
+						/>
+					</div>
+					<div class="flex flex-col justify-end">
+						<div class="flex justify-center w-full">
+							<button type="submit" class="btn btn-primary w-fit">
+								Import Data
+							</button>
+						</div>
+					</div>
+				</form>
+			</div>
+			<div id="progress" class="hidden flex justify-center space-x-4">
+				<div class="my-auto">Importing...</div>
+				<progress class="progress progress-info w-56 my-auto"></progress>
+			</div>
+			<!-- Failed Rows Modal -->
+			<div id="failedRowsModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden">
+				<div class="bg-white rounded-lg p-6 max-w-2xl w-full mx-4">
+					<h3 class="text-lg font-bold mb-4">Failed Rows</h3>
+					<pre id="failedRowsContent" class="bg-gray-100 p-4 rounded-lg overflow-auto max-h-96 text-sm"></pre>
+					<div class="mt-4 flex justify-end">
+						<button onclick="closeModal()" class="btn btn-primary">
+							Close
+						</button>
+					</div>
+				</div>
+			</div>
+		</div>
+	}
+}

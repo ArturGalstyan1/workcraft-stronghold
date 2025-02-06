@@ -43,12 +43,6 @@ build-linux: build-css templ
 # Build for all platforms
 build-all: build-mac build-linux
 
-# Database commands
-recreate_db:
-	@rm -f workcraft.db
-	@sqlite3 workcraft.db ".databases" ".quit"
-	@echo "Database created"
-
 clear_db:
 	@sqlite3 ./workcraft.db "DELETE FROM peon; DELETE FROM bountyboard;"
 	@echo "Database cleared"

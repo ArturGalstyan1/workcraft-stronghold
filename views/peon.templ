@@ -7,131 +7,150 @@ templ Peon(peonID string) {
 		@templ.JSONScript("peonID", peonID)
 		<script defer>
 
-            const peonID = JSON.parse(document.getElementById('peonID').innerText);
-            console.log('Peon ID:', peonID);
-            const sse = window.getSSE();
-            sse.onopen = function() {
-                console.log('Connected');
-            };
-            sse.onmessage = function(e) {
-                const data = JSON.parse(e.data);
-                if (data.type === 'peon_update' && data.message.peon.id === peonID) {
-                    setPeon(data.message.peon);
-                }
-            };
-            sse.onerror = function(error) {
-                console.error('WebSocket error:', error);
-            };
+		const peonID = JSON.parse(document.getElementById('peonID').innerText);
+		console.log('Peon ID:', peonID);
+		const sse = window.getSSE();
+		sse.onopen = function() {
+			console.log('Connected');
+		};
+		sse.onmessage = function(e) {
+			const data = JSON.parse(e.data);
+			if (data.type === 'peon_update' && data.message.peon.id === peonID) {
+				setPeon(data.message.peon);
+			}
+		};
+		sse.onerror = function(error) {
+			console.error('WebSocket error:', error);
+		};
 
 
-            function setPeon(peon) {
-                // Update status with color coding
-                const statusEl = document.getElementById('peon-status');
-                statusEl.textContent = peon.status;
-                statusEl.className = `px-2 py-1 rounded-full text-sm inline-block ${
-                    peon.status === 'IDLE' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
-                }`;
+		function setPeon(peon) {
+			// Update status with color coding
+			const statusEl = document.getElementById('peon-status');
+			statusEl.textContent = peon.status;
+			statusEl.className = `px-2 py-1 rounded-full text-sm inline-block ${
+				peon.status === 'IDLE' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
+				}`;
 
-                // Format and set timestamp
-                const timestamp = new Date(peon.last_heartbeat)
-                    .toLocaleString('en-US', {
-                        year: 'numeric',
-                        month: '2-digit',
-                        day: '2-digit',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        second: '2-digit'
-                    });
-                document.getElementById('peon-heartbeat').textContent = timestamp;
+			// Format and set timestamp
+			const timestamp = new Date(peon.last_heartbeat)
+				.toLocaleString('en-US', {
+					year: 'numeric',
+					month: '2-digit',
+					day: '2-digit',
+					hour: '2-digit',
+					minute: '2-digit',
+					second: '2-digit'
+				});
+			document.getElementById('peon-heartbeat').textContent = timestamp;
 
-                // Update queues
-                document.getElementById('peon-queues').textContent =
-                    Array.isArray(peon.queues) ? peon.queues.join(', ') : peon.queues;
+			// Update queues
+			document.getElementById('peon-queues').textContent =
+				Array.isArray(peon.queues) ? peon.queues.join(', ') : peon.queues;
 
-                // Update current task
-                const taskEl = document.getElementById('peon-currenttask');
-                if (peon.current_task) {
-                    taskEl.href = `/task/${peon.current_task}`;
-                    taskEl.textContent = peon.current_task;
-                    taskEl.className = 'text-blue-600 hover:underline';
-                } else {
-                    taskEl.removeAttribute('href');
-                    taskEl.textContent = 'No active task';
-                    taskEl.className = 'text-gray-500';
-                }
-            }
+			// Update current task
+			const taskEl = document.getElementById('peon-currenttask');
+			if (peon.current_task) {
+				taskEl.href = `/task/${peon.current_task}`;
+				taskEl.textContent = peon.current_task;
+				taskEl.className = 'text-blue-600 hover:underline';
+			} else {
+				taskEl.removeAttribute('href');
+				taskEl.textContent = 'No active task';
+				taskEl.className = 'text-gray-500';
+			}
+		}
 
-            function updateTaskHistory(tasks) {
-                const tbody = document.getElementById('task-history');
-                tbody.innerHTML = '';
+		function updateTaskHistory(tasks) {
+			const tbody = document.getElementById('task-history');
+			tbody.innerHTML = '';
 
-                if (tasks.length === 0) {
-                    const row = document.createElement('tr');
-                    row.innerHTML = `
-                        <td colspan="2" class="text-center py-4 text-gray-500">
-                            No task history available
-                        </td>
-                    `;
-                    tbody.appendChild(row);
-                    return;
-                }
+			if (tasks.length === 0) {
+				const row = document.createElement('tr');
+				row.innerHTML = `
+					<td colspan="2" class="text-center py-4 text-gray-500">
+					No task history available
+					</td>
+					`;
+				tbody.appendChild(row);
+				return;
+			}
 
-                tasks.forEach(task => {
-                    const row = document.createElement('tr');
-                    row.className = 'hover:bg-gray-50';
-                    row.innerHTML = `
-                        <td class="px-4 py-3 border-b">
-                            <a href="/task/${task.id}" class="text-blue-600 hover:underline">
-                                ${task.id}
-                            </a>
-                        </td>
-                        <td class="px-4 py-3 border-b">${task.task_name}</td>
-                        <td class="px-4 py-3 border-b">
-                            <span class="px-2 py-1 rounded-full text-sm inline-block ${
-                              window.getStatusColor(task.status)
-                            }">
-                                ${task.status}
-                            </span>
-                        </td>
-                    `;
-                    tbody.appendChild(row);
-                });
-            }
+			tasks.forEach(task => {
+				const row = document.createElement('tr');
+				row.className = 'hover:bg-gray-50';
+				row.innerHTML = `
+					<td class="px-4 py-3 border-b">
+					<a href="/task/${task.id}" class="text-blue-600 hover:underline">
+					${task.id}
+					</a>
+					</td>
+					<td class="px-4 py-3 border-b">${task.task_name}</td>
+					<td class="px-4 py-3 border-b">
+					<span class="px-2 py-1 rounded-full text-sm inline-block ${
+					window.getStatusColor(task.status)
+					}">
+					${task.status}
+					</span>
+					</td>
+					`;
+				tbody.appendChild(row);
+			});
+		}
 
+		let peonExists = true;
 
-            async function pollPeonData() {
-                try {
-                    const response = await fetch(`/api/peon/${peonID}`);
-                    if (!response.ok) throw new Error('Failed to fetch peon data');
-                    const peon = await response.json();
-                    setPeon(peon);
-                } catch (error) {
-                    console.error('Error polling peon data:', error);
-                }
-            }
+		async function pollPeonData() {
+			if (!peonExists) return;
+			try {
+				const response = await fetch(`/api/peon/${peonID}`);
+				if (!response.ok)
+					{
+						if (response.status === 404) {
+							if (peonExists) {
+								console.error('Peon not found');
+								peonExists = false;
+								document.getElementById('peon-status').textContent = 'Not found';
+								document.getElementById('peon-status').className = 'px-2 py-1 rounded-full text-sm bg-red-100 text-red-800';
 
-            async function pollTaskHistory() {
-                try {
-                    const response = await fetch(`/api/peon/${peonID}/tasks`);
-                    if (!response.ok) throw new Error('Failed to fetch task history');
-                    const tasks = await response.json();
-                    updateTaskHistory(tasks);
-                    document.getElementById('table-wrapper').classList.remove('animate-pulse');
-                } catch (error) {
-                    console.error('Error polling task history:', error);
-                }
-            }
+								document.getElementById('peon-heartbeat').textContent = 'N/A';
+								document.getElementById('peon-queues').textContent = 'N/A';
+								document.getElementById('peon-currenttask').textContent = 'N/A';
+							}
+							return;
+						}
+						throw new Error('Failed to fetch peon data');
 
-            $(document).ready(function() {
-              console.log('Document ready');
-              pollPeonData();
-              pollTaskHistory();
+					}
+				const peon = await response.json();
+				setPeon(peon);
+			} catch (error) {
+				console.error('Error polling peon data:', error);
+			}
+		}
 
-              setInterval(pollPeonData, 5000);
-              setInterval(pollTaskHistory, 5000);
-            });
+		async function pollTaskHistory() {
+			try {
+				const response = await fetch(`/api/peon/${peonID}/tasks`);
+				if (!response.ok) throw new Error('Failed to fetch task history');
+				const tasks = await response.json();
+				updateTaskHistory(tasks);
+				document.getElementById('table-wrapper').classList.remove('animate-pulse');
+			} catch (error) {
+				console.error('Error polling task history:', error);
+			}
+		}
 
-        </script>
+		$(document).ready(function() {
+			console.log('Document ready');
+			pollPeonData();
+			pollTaskHistory();
+
+			setInterval(pollPeonData, 5000);
+			setInterval(pollTaskHistory, 5000);
+		});
+
+		</script>
 		<div class="max-w-4xl mx-auto p-6">
 			<!-- Peon Status Card -->
 			<div class="bg-gray-50 rounded-lg shadow-sm border border-gray-200 p-6 mb-8">

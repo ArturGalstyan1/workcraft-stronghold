@@ -110,6 +110,7 @@ func (s *Stronghold) StartHTTPServer() {
 	http.HandleFunc("GET /tasks/", handlers.AuthMiddleware(handlers.TaskView, s.hashedAPIKey))
 	http.HandleFunc("GET /peon/{id}/", handlers.AuthMiddleware(handlers.CreatePeonViewHandler(), s.hashedAPIKey))
 	http.HandleFunc("GET /peons/", handlers.AuthMiddleware(handlers.CreatePeonsViewHandler(), s.hashedAPIKey))
+	http.HandleFunc("GET /db/", handlers.AuthMiddleware(handlers.CreateDBDataViewHandler(), s.hashedAPIKey))
 
 	http.HandleFunc("GET /api/peons", handlers.AuthMiddleware(handlers.CreateGetPeonsHandler(s.db), s.hashedAPIKey))
 	http.HandleFunc("GET /api/peon/{id}", handlers.AuthMiddleware(handlers.CreateGetPeonHandler(s.db), s.hashedAPIKey))
@@ -123,7 +124,9 @@ func (s *Stronghold) StartHTTPServer() {
 	http.HandleFunc("POST /api/task/{id}/cancel", handlers.AuthMiddleware(handlers.CreateCancelTaskHandler(s.db, s.eventSender), s.hashedAPIKey))
 	http.HandleFunc("POST /api/task/{id}/update", handlers.AuthMiddleware(handlers.CreateTaskUpdateHandler(s.db, s.eventSender), s.hashedAPIKey))
 	http.HandleFunc("GET /api/test", handlers.AuthMiddleware(createTestHandler(s.eventSender), s.hashedAPIKey))
-	http.HandleFunc("GET /api/db_dump", handlers.AuthMiddleware(handlers.DumpDatabaseHandler, s.hashedAPIKey))
+	http.HandleFunc("GET /api/db/dump/sqlite", handlers.AuthMiddleware(handlers.DumpDatabaseHandler, s.hashedAPIKey))
+	http.HandleFunc("GET /api/db/dump/csv", handlers.AuthMiddleware(handlers.CreateDumpDatabaseAsCSVHandler(s.db), s.hashedAPIKey))
+	http.HandleFunc("POST /api/db/import/csv", handlers.AuthMiddleware(handlers.CreateImportCSVToDBHandler(s.db), s.hashedAPIKey))
 	http.HandleFunc("GET /api/heartbeat", heartbeatHandler())
 	http.HandleFunc("/events", handlers.AuthMiddleware(handlers.CreateSSEHandler(s.eventSender, s.db), s.hashedAPIKey))
 
