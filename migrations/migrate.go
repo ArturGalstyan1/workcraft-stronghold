@@ -1,8 +1,7 @@
 package migrations
 
 import (
-	"log/slog"
-
+	"github.com/Artur-Galstyan/workcraft-stronghold/logger"
 	"github.com/Artur-Galstyan/workcraft-stronghold/models"
 	"gorm.io/gorm"
 )
@@ -12,25 +11,25 @@ func Migrate(db *gorm.DB) error {
 	if err := db.AutoMigrate(&models.Peon{}); err != nil {
 		return err
 	}
-	slog.Info("Peon model migrated")
+	logger.Log.Info("Peon model migrated")
 
 	// Migrate Task model
 	if err := db.AutoMigrate(&models.Task{}); err != nil {
 		return err
 	}
-	slog.Info("Task model migrated")
+	logger.Log.Info("Task model migrated")
 
 	// Migrate Stats model
 	if err := db.AutoMigrate(&models.Stats{}); err != nil {
 		return err
 	}
-	slog.Info("Stats model migrated")
+	logger.Log.Info("Stats model migrated")
 
 	// Migrate Queue model
 	if err := db.AutoMigrate(&models.Queue{}); err != nil {
 		return err
 	}
-	slog.Info("Queue model migrated")
+	logger.Log.Info("Queue model migrated")
 
 	return nil
 }

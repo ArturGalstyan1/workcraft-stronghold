@@ -2,10 +2,11 @@ package events
 
 import (
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
+
+	"github.com/Artur-Galstyan/workcraft-stronghold/logger"
 )
 
 type EventSender struct {
@@ -58,12 +59,12 @@ func (s *EventSender) BroadcastToPeons(msg string) {
 		rc := s.controllers[id]
 		_, err := fmt.Fprintf(w, "data: %s\n\n", msg)
 		if err != nil {
-			slog.Error("Failed to write to writer", "err", err)
+			logger.Log.Error("Failed to flush writer", "err", err)
 			continue
 		}
 		err = rc.Flush()
 		if err != nil {
-			slog.Error("Failed to flush writer", "err", err)
+			logger.Log.Error("Failed to flush writer", "err", err)
 			continue
 		}
 
@@ -81,12 +82,12 @@ func (s *EventSender) BroadcastToChieftains(msg string) {
 			rc := s.controllers[id]
 			_, err := fmt.Fprintf(w, "data: %s\n\n", msg)
 			if err != nil {
-				slog.Error("Failed to write to writer", "err", err)
+				logger.Log.Error("Failed to write to writer", "err", err)
 				continue
 			}
 			err = rc.Flush()
 			if err != nil {
-				slog.Error("Failed to flush writer", "err", err)
+				logger.Log.Error("Failed to flush writer", "err", err)
 				continue
 			}
 		}

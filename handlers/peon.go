@@ -3,10 +3,10 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 
 	"github.com/Artur-Galstyan/workcraft-stronghold/events"
+	"github.com/Artur-Galstyan/workcraft-stronghold/logger"
 	"github.com/Artur-Galstyan/workcraft-stronghold/models"
 	"github.com/Artur-Galstyan/workcraft-stronghold/sqls"
 	"github.com/Artur-Galstyan/workcraft-stronghold/utils"
@@ -17,7 +17,7 @@ import (
 
 func CreateGetPeonsHandler(db *gorm.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// slog.Info("GET /api/peons")
+		// logger.Log.Info("GET /api/peons")
 
 		queryParams, err := utils.ParsePeonQuery(r.URL.Query().Get("query"))
 		if err != nil {
@@ -29,7 +29,7 @@ func CreateGetPeonsHandler(db *gorm.DB) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(response); err != nil {
-			slog.Error("Error encoding response", "err", err)
+			logger.Log.Error("Error encoding response", "err", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 		}
 	}
@@ -39,21 +39,21 @@ func CreateGetPeonHandler(db *gorm.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		peonID := r.PathValue("id")
 		if peonID == "" {
-			slog.Error("Peon ID is required")
+			logger.Log.Error("Peon ID is required")
 			http.Error(w, "Peon ID is required", http.StatusBadRequest)
 			return
 		}
 
 		peon, err := sqls.GetPeon(db, peonID)
 		if err != nil {
-			slog.Error("Error querying peon", "err", err)
+			logger.Log.Error("Error querying peon", "err", err)
 			http.Error(w, "Unable to find peon"+fmt.Sprintf("%v", err), http.StatusNotFound)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(peon); err != nil {
-			slog.Error("Failed to encode peon", "err", err)
+			logger.Log.Error("Failed to encode peon", "err", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 		}
 	}
@@ -63,21 +63,21 @@ func CreateGetPeonTaskHandler(db *gorm.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		peonID := r.PathValue("id")
 		if peonID == "" {
-			slog.Error("Peon ID is required")
+			logger.Log.Error("Peon ID is required")
 			http.Error(w, "Peon ID is required", http.StatusBadRequest)
 			return
 		}
 
 		tasks, err := sqls.GetTasksByPeonID(db, peonID)
 		if err != nil {
-			slog.Error("Error querying tasks", "err", err)
+			logger.Log.Error("Error querying tasks", "err", err)
 			http.Error(w, "Unable to find tasks", http.StatusInternalServerError)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(tasks); err != nil {
-			slog.Error("Failed to encode tasks", "err", err)
+			logger.Log.Error("Failed to encode tasks", "err", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 		}
 	}
@@ -87,13 +87,13 @@ func CreateUpdatePeonHandler(db *gorm.DB, eventSender *events.EventSender) http.
 	return func(w http.ResponseWriter, r *http.Request) {
 		peonID := r.PathValue("id")
 		if peonID == "" {
-			slog.Error("Peon ID is required")
+			logger.Log.Error("Peon ID is required")
 			http.Error(w, "Peon ID is required", http.StatusBadRequest)
 			return
 		}
 		var rawJSON map[string]interface{}
 		if err := json.NewDecoder(r.Body).Decode(&rawJSON); err != nil {
-			slog.Error("Failed to decode request body", "err", err)
+			logger.Log.Error("Failed to decode request body", "err", err)
 			http.Error(w, "Invalid request body", http.StatusBadRequest)
 			return
 		}
@@ -101,7 +101,7 @@ func CreateUpdatePeonHandler(db *gorm.DB, eventSender *events.EventSender) http.
 		var update models.PeonUpdate
 		jsonBytes, _ := json.Marshal(rawJSON)
 		if err := json.Unmarshal(jsonBytes, &update); err != nil {
-			slog.Error("Failed to parse update data", "err", err)
+			logger.Log.Error("Failed to parse update data", "err", err)
 			http.Error(w, "Invalid update data", http.StatusBadRequest)
 			return
 		}
@@ -113,14 +113,14 @@ func CreateUpdatePeonHandler(db *gorm.DB, eventSender *events.EventSender) http.
 
 		updatedPeon, err := sqls.UpdatePeon(db, peonID, update)
 		if err != nil {
-			slog.Error("Failed to update peon", "err", err)
+			logger.Log.Error("Failed to update peon", "err", err)
 			http.Error(w, "Failed to update peon", http.StatusInternalServerError)
 			return
 		}
 
 		peonJSON, err := json.Marshal(updatedPeon)
 		if err != nil {
-			slog.Error("Failed to serialize updated peon", "err", err)
+			logger.Log.Error("Failed to serialize updated peon", "err", err)
 			http.Error(w, "Failed to serialize updated peon", http.StatusInternalServerError)
 			return
 		}
@@ -131,7 +131,7 @@ func CreateUpdatePeonHandler(db *gorm.DB, eventSender *events.EventSender) http.
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(updatedPeon); err != nil {
-			slog.Error("Failed to encode updated peon", "err", err)
+			logger.Log.Error("Failed to encode updated peon", "err", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 		}
 	}
@@ -141,21 +141,21 @@ func CreatePostStatisticsHandler(db *gorm.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var stats models.Stats
 		if err := json.NewDecoder(r.Body).Decode(&stats); err != nil {
-			slog.Error("Failed to decode request body", "err", err)
+			logger.Log.Error("Failed to decode request body", "err", err)
 			http.Error(w, "Invalid request body", http.StatusBadRequest)
 			return
 		}
 
 		s, err := sqls.CreateStats(db, stats)
 		if err != nil {
-			slog.Error("Failed to create statistics", "err", err)
+			logger.Log.Error("Failed to create statistics", "err", err)
 			http.Error(w, "Failed to create statistics", http.StatusInternalServerError)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(s); err != nil {
-			slog.Error("Failed to encode statistics", "err", err)
+			logger.Log.Error("Failed to encode statistics", "err", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 		}
 	}
@@ -165,7 +165,7 @@ func CreatePeonViewHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		peonID := r.PathValue("id")
 		if peonID == "" {
-			slog.Error("Peon ID is required")
+			logger.Log.Error("Peon ID is required")
 			http.Error(w, "Peon ID is required", http.StatusBadRequest)
 			return
 		}

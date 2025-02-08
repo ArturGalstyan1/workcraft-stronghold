@@ -7,12 +7,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/Artur-Galstyan/workcraft-stronghold/logger"
 	"github.com/Artur-Galstyan/workcraft-stronghold/models"
 )
 
@@ -128,21 +128,21 @@ func (w *MockWorker) SyncWithDB() {
 }
 
 func (w *MockWorker) processTask(task models.Task) {
-	slog.Info("Processing task", "taskID", task.ID)
+	logger.Log.Info("Processing task", "taskID", task.ID)
 	w.Status = "WORKING"
 	taskID := task.ID
 	w.CurrentTaskID = &taskID
 	w.SyncWithDB()
 
-	slog.Info("Task processing started", "taskID", task.ID)
+	logger.Log.Info("Task processing started", "taskID", task.ID)
 	w.updateTaskStatus(task.ID, "RUNNING")
 
 	time.Sleep(5 * time.Second)
 
-	slog.Info("Task processing finished", "taskID", task.ID)
+	logger.Log.Info("Task processing finished", "taskID", task.ID)
 	w.updateTaskStatus(task.ID, "SUCCESSFUL")
 
-	slog.Info("Task processing finished", "taskID", task.ID)
+	logger.Log.Info("Task processing finished", "taskID", task.ID)
 	w.Status = "IDLE"
 	w.CurrentTaskID = nil
 	w.SyncWithDB()
@@ -231,10 +231,10 @@ func (w *MockWorker) sse() {
 	for {
 		select {
 		case <-w.stopChan:
-			slog.Info("SSE loop stopping", "worker_id", w.ID)
+			logger.Log.Info("SSE loop stopping", "worker_id", w.ID)
 			return
 		case err := <-errChan:
-			slog.Error("Error reading from SSE", "error", err)
+			logger.Log.Error("Error reading from SSE", "error", err)
 			return
 		case stringLine := <-dataChan:
 			if stringLine != "" && stringLine != "\n" {
@@ -247,20 +247,20 @@ func (w *MockWorker) sse() {
 				parsedData := make(map[string]interface{})
 				err = json.Unmarshal([]byte(dataJSON), &parsedData)
 				if err != nil {
-					slog.Error("Error parsing JSON", "error", err)
+					logger.Log.Error("Error parsing JSON", "error", err)
 					continue
 				}
 
 				if parsedData["type"] == "new_task" {
 					taskDataJSON, err := json.Marshal(parsedData["data"])
 					if err != nil {
-						slog.Error("Error marshaling task data", "error", err)
+						logger.Log.Error("Error marshaling task data", "error", err)
 						continue
 					}
 
 					var task models.Task
 					if err := json.Unmarshal(taskDataJSON, &task); err != nil {
-						slog.Error("Error unmarshaling task", "error", err)
+						logger.Log.Error("Error unmarshaling task", "error", err)
 						continue
 					}
 
@@ -268,9 +268,9 @@ func (w *MockWorker) sse() {
 
 					select {
 					case w.taskChan <- task:
-						slog.Info("Task queued for processing", "task_id", task.ID)
+						logger.Log.Info("Task queued for processing", "task_id", task.ID)
 					default:
-						slog.Warn("Task queue full, dropping task", "task_id", task.ID)
+						logger.Log.Warn("Task queue full, dropping task", "task_id", task.ID)
 					}
 				}
 			}

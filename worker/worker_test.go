@@ -18,7 +18,7 @@ func TestMockWorker(t *testing.T) {
 	defer cleanUp()
 
 	eventSender := events.NewEventSender()
-	s := stronghold.NewStronghold("abcd", db, eventSender)
+	s := stronghold.NewStronghold("abcd", db, eventSender, models.WorkcraftConfig{TimeBeforeDeadPeon: 5 * time.Second})
 	go s.Run()
 	time.Sleep(1 * time.Second)
 

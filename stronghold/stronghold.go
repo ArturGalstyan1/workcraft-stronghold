@@ -5,13 +5,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/Artur-Galstyan/workcraft-stronghold/events"
 	"github.com/Artur-Galstyan/workcraft-stronghold/handlers"
+	"github.com/Artur-Galstyan/workcraft-stronghold/logger"
 	"github.com/Artur-Galstyan/workcraft-stronghold/models"
 	"github.com/Artur-Galstyan/workcraft-stronghold/sqls"
 	"github.com/Artur-Galstyan/workcraft-stronghold/static"
@@ -26,9 +26,10 @@ type Stronghold struct {
 	hashedAPIKey string
 	db           *gorm.DB
 	eventSender  *events.EventSender
+	config       models.WorkcraftConfig
 }
 
-func NewStronghold(apiKey string, db *gorm.DB, eventSender *events.EventSender) *Stronghold {
+func NewStronghold(apiKey string, db *gorm.DB, eventSender *events.EventSender, config models.WorkcraftConfig) *Stronghold {
 
 	hasher := sha256.New()
 	hasher.Write([]byte(apiKey))
@@ -38,6 +39,7 @@ func NewStronghold(apiKey string, db *gorm.DB, eventSender *events.EventSender) 
 		hashedAPIKey: hashedAPIKey,
 		db:           db,
 		eventSender:  eventSender,
+		config:       config,
 	}
 
 }
@@ -61,7 +63,7 @@ func (s *Stronghold) SetupBackgroundTasks() {
 			mutex.Unlock()
 
 			if result.Error != nil {
-				slog.Error("Failed to clean up dead peons", "err", result.Error)
+				logger.Log.Error("Failed to clean up dead peons", "err", result.Error)
 			}
 		}
 	}()
@@ -76,7 +78,7 @@ func (s *Stronghold) SetupBackgroundTasks() {
 			mutex.Unlock()
 
 			if err != nil {
-				slog.Error("Failed to clean up inconsistencies", "err", err)
+				logger.Log.Error("Failed to clean up inconsistencies", "err", err)
 			}
 		}
 	}()
@@ -130,23 +132,23 @@ func (s *Stronghold) StartHTTPServer() {
 	http.HandleFunc("GET /api/heartbeat", heartbeatHandler())
 	http.HandleFunc("/events", handlers.AuthMiddleware(handlers.CreateSSEHandler(s.eventSender, s.db), s.hashedAPIKey))
 
-	slog.Info("Building Stronghold on port 6112")
+	logger.Log.Info("Building Stronghold on port 6112")
 	if err := http.ListenAndServe(":6112", nil); err != nil {
-		slog.Error("Server failed", "error", err)
+		logger.Log.Error("Server failed", "error", err)
 	}
 
 }
 
 func heartbeatHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		slog.Info("GET /heartbeat")
+		logger.Log.Info("GET /heartbeat")
 		w.Write([]byte("Success!"))
 	}
 }
 
 func createTestHandler(eventSender *events.EventSender) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		slog.Info("GET /test")
+		logger.Log.Info("GET /test")
 		eventSender.BroadcastToChieftains("HI")
 		w.Write([]byte("Success!"))
 	}
@@ -155,7 +157,7 @@ func createTestHandler(eventSender *events.EventSender) http.HandlerFunc {
 func (s *Stronghold) SendPendingTasks() {
 	tasks, err := sqls.GetNotYetSentOutTasks(s.db)
 	if err != nil {
-		slog.Error("Failed to get tasks", "err", err)
+		logger.Log.Error("Failed to get tasks", "err", err)
 		return
 	}
 	if len(tasks) == 0 {
@@ -168,13 +170,13 @@ func (s *Stronghold) SendPendingTasks() {
 		peon, err := sqls.GetAvailablePeon(s.db, task.Queue, usedPeons)
 		usedPeons[peon.ID] = true
 		if err != nil {
-			slog.Info("Failed to get available peon, skipping. ", "err", err)
+			// logger.Log.Info("Failed to get available peon, skipping. ", "err", err)
 			continue
 		}
 
 		taskJSON, err := json.Marshal(task)
 		if err != nil {
-			slog.Error("Failed to marshal task", "err", err)
+			logger.Log.Error("Failed to marshal task", "err", err)
 			return
 		}
 
@@ -189,61 +191,77 @@ func (s *Stronghold) SendHeartbeatToPeons() {
 }
 
 func (s *Stronghold) PutPendingTasksIntoQueue() {
-	var pendingTasks []models.Task
-	err := s.db.Where(
-		`(
-    (status = 'PENDING' AND id NOT IN (SELECT task_id FROM queues WHERE sent_to_peon = true))
-    OR
-    (
-        status = 'FAILURE'
-        AND retry_on_failure = true
-        AND retry_count < retry_limit
-    )
-)`,
-	).Find(&pendingTasks).Error
+	type TaskInfo struct {
+		ID         string
+		Status     string
+		RetryCount int
+	}
+	var tasksToProcess []TaskInfo
+
+	err := s.db.Raw(`
+        SELECT id, status, retry_count
+        FROM tasks
+        WHERE (
+            (status = 'PENDING' AND id NOT IN (SELECT task_id FROM queues))
+            OR
+            (
+                status = 'FAILURE'
+                AND retry_on_failure = true
+                AND retry_count < retry_limit
+                AND id NOT IN (SELECT task_id FROM queues)
+            )
+        )
+    `).Scan(&tasksToProcess).Error
 
 	if err != nil {
-		slog.Error("Failed to get tasks to process", "err", err)
+		logger.Log.Error("Failed to get tasks to process", "err", err)
 		return
 	}
-	if len(pendingTasks) == 0 {
+
+	if len(tasksToProcess) == 0 {
 		return
 	}
 
 	tx := s.db.Begin()
 	if tx.Error != nil {
-		slog.Error("Failed to begin transaction", "err", tx.Error)
+		logger.Log.Error("Failed to begin transaction", "err", tx.Error)
 		return
 	}
 	defer tx.Rollback()
 
-	for _, task := range pendingTasks {
+	for _, taskInfo := range tasksToProcess {
 		queue := models.Queue{
-			TaskID:     task.ID,
+			TaskID:     taskInfo.ID,
 			SentToPeon: false,
 		}
 		if err := tx.Clauses(clause.OnConflict{
 			UpdateAll: true,
 		}).Create(&queue).Error; err != nil {
-			slog.Error("Failed to upsert task into queue", "taskID", task.ID, "err", err)
+			logger.Log.Error("Failed to upsert task into queue", "taskID", taskInfo.ID, "err", err)
 			return
 		}
 
-		if task.Status == models.TaskStatusFailure {
-			if err := tx.Model(&task).Update("retry_count", task.RetryCount+1).Error; err != nil {
-				slog.Error("Failed to increment retry count", "taskID", task.ID, "err", err)
+		if taskInfo.Status == string(models.TaskStatusFailure) {
+			if err := tx.Exec(`
+                UPDATE tasks
+                SET retry_count = ?
+                WHERE id = ?`,
+				taskInfo.RetryCount+1, taskInfo.ID,
+			).Error; err != nil {
+				logger.Log.Error("Failed to increment retry count", "taskID", taskInfo.ID, "err", err)
 				return
 			}
 		}
 	}
 
 	if err := tx.Commit().Error; err != nil {
-		slog.Error("Failed to commit transaction", "err", err)
+		logger.Log.Error("Failed to commit transaction", "err", err)
+		return
 	}
 }
 
 func (s *Stronghold) SendPendingTasksInterval() {
-	ticker := time.NewTicker(time.Second)
+	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 	for {
 		select {
@@ -251,6 +269,48 @@ func (s *Stronghold) SendPendingTasksInterval() {
 			s.PutPendingTasksIntoQueue()
 			s.SendPendingTasks()
 			s.SendHeartbeatToPeons()
+		}
+	}
+}
+
+func (s *Stronghold) CheckDeadWorkers() {
+	var deadPeons []models.Peon
+
+	waitingTimeDuration := s.config.TimeBeforeDeadPeon
+
+	err := s.db.Raw(`
+        SELECT *
+        FROM peons
+        WHERE last_heartbeat < ? AND status != 'OFFLINE'
+    `, time.Now().Add(-waitingTimeDuration)).Scan(&deadPeons).Error
+
+	if err != nil {
+		logger.Log.Error("Failed to get dead peons", "err", err)
+		return
+	}
+
+	if len(deadPeons) == 0 {
+		return
+	}
+
+	for _, peon := range deadPeons {
+		logger.Log.Info("Peon is dead", "peonID", peon.ID)
+		peon.CurrentTask = nil
+		peon.Status = "OFFLINE"
+		if err := s.db.Save(&peon).Error; err != nil {
+			logger.Log.Error("Failed to update peon status to OFFLINE", "peonID", peon.ID, "err", err)
+		}
+	}
+
+}
+
+func (s *Stronghold) CheckDeadWorkerInterval() {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			s.CheckDeadWorkers()
 		}
 	}
 }

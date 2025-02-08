@@ -6,3 +6,4 @@ workcraft.db
 workcraft.db
 database/workcraft.db
 bin/.env
+scripts/.venv

@@ -3,10 +3,10 @@ package sqls
 import (
 	"errors"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/Artur-Galstyan/workcraft-stronghold/errs"
+	"github.com/Artur-Galstyan/workcraft-stronghold/logger"
 	"github.com/Artur-Galstyan/workcraft-stronghold/models"
 	"github.com/Artur-Galstyan/workcraft-stronghold/utils"
 	"gorm.io/gorm"
@@ -151,7 +151,7 @@ func GetPeons(db *gorm.DB, queryParams models.PeonQuery) (models.PaginatedRespon
 
 	var totalItems int64
 	if err := query.Count(&totalItems).Error; err != nil {
-		slog.Error("Error counting peons", "err", err)
+		logger.Log.Error("Error counting peons", "err", err)
 		return models.PaginatedResponse{}, fmt.Errorf("failed to count peons: %w", err)
 	}
 
@@ -255,7 +255,7 @@ func GetTasks(db *gorm.DB, queryParams models.TaskQuery) (models.PaginatedRespon
 
 	var totalItems int64
 	if err := query.Count(&totalItems).Error; err != nil {
-		slog.Error("Error counting tasks", "err", err)
+		logger.Log.Error("Error counting tasks", "err", err)
 		return models.PaginatedResponse{}, fmt.Errorf("failed to count tasks: %w", err)
 	}
 

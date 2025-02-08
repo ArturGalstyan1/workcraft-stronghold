@@ -9,6 +9,10 @@ import (
 	"gorm.io/gorm"
 )
 
+type WorkcraftConfig struct {
+	TimeBeforeDeadPeon time.Duration `json:"time_before_dead_peon"`
+}
+
 type BaseModel struct {
 	ID        string     `gorm:"primarykey;type:string" json:"id"`
 	CreatedAt time.Time  `json:"created_at"`
@@ -18,7 +22,7 @@ type BaseModel struct {
 
 type Queue struct {
 	BaseModel
-	TaskID     string `json:"task_id" gorm:"not null"`
+	TaskID     string `json:"task_id" gorm:"not null;unique"`
 	SentToPeon bool   `json:"queued" gorm:"default:false"`
 }
 
@@ -118,6 +122,15 @@ const (
 	TaskStatusInvalid      TaskStatus = "INVALID"
 	TaskStatusCancelled    TaskStatus = "CANCELLED"
 	TaskStatusAcknowledged TaskStatus = "ACKNOWLEDGED"
+)
+
+type PeonStatus string
+
+const (
+	PeonStatusIdle      PeonStatus = "IDLE"
+	PeonStatusWorking   PeonStatus = "WORKING"
+	PeonStatusOffline   PeonStatus = "OFFLINE"
+	PeonStatusPreparing PeonStatus = "PREPARING"
 )
 
 type TaskPayload struct {

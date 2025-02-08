@@ -2,11 +2,11 @@ package handlers
 
 import (
 	"fmt"
-	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/Artur-Galstyan/workcraft-stronghold/events"
+	"github.com/Artur-Galstyan/workcraft-stronghold/logger"
 	"github.com/Artur-Galstyan/workcraft-stronghold/models"
 	"github.com/Artur-Galstyan/workcraft-stronghold/sqls"
 	"github.com/Artur-Galstyan/workcraft-stronghold/utils"
@@ -41,7 +41,7 @@ func CreateSSEHandler(eventSender *events.EventSender, db *gorm.DB) http.Handler
 		var connectionID string
 
 		if connectionType == "peon" {
-			slog.Info("Peon connected", "peon_id", peonID)
+			logger.Log.Info("Peon connected", "peon_id", peonID)
 			connectionID = peonID
 
 			peon := models.Peon{
@@ -52,7 +52,7 @@ func CreateSSEHandler(eventSender *events.EventSender, db *gorm.DB) http.Handler
 
 			_, err := sqls.CreatePeon(db, peon)
 			if err != nil {
-				slog.Error("Failed to create peon", "err", err)
+				logger.Log.Error("Failed to create peon", "err", err)
 				return
 			}
 
@@ -74,7 +74,7 @@ func CreateSSEHandler(eventSender *events.EventSender, db *gorm.DB) http.Handler
 
 		connectedJSON := fmt.Sprintf("{\"type\": \"connected\", \"connection_id\": \"%s\"}", connectionID)
 		if err := eventSender.SendEvent(connectionID, connectedJSON); err != nil {
-			slog.Error("Failed to send connected event", "err", err)
+			logger.Log.Error("Failed to send connected event", "err", err)
 			return
 		}
 
@@ -83,7 +83,7 @@ func CreateSSEHandler(eventSender *events.EventSender, db *gorm.DB) http.Handler
 			select {
 			case <-connClosed:
 				if connectionType == "peon" {
-					slog.Info("Peon disconnected", "peon_id", peonID)
+					logger.Log.Info("Peon disconnected", "peon_id", peonID)
 
 					offlineStatus := "OFFLINE"
 					result := db.Model(&models.Peon{}).
@@ -91,18 +91,18 @@ func CreateSSEHandler(eventSender *events.EventSender, db *gorm.DB) http.Handler
 						Update("status", offlineStatus)
 
 					if result.Error != nil {
-						slog.Error("Failed to mark peon offline", "err", result.Error)
+						logger.Log.Error("Failed to mark peon offline", "err", result.Error)
 						return
 					}
 
 					if err := utils.CleanInconsistencies(db); err != nil {
-						slog.Error("Failed to clean inconsistencies", "err", err)
+						logger.Log.Error("Failed to clean inconsistencies", "err", err)
 						return
 					}
 				}
 				return
 			case <-ticker.C:
-				slog.Debug("Ticker!")
+				logger.Log.Debug("Ticker!")
 			}
 		}
 	}

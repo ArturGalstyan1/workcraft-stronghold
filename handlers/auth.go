@@ -4,12 +4,12 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/Artur-Galstyan/workcraft-stronghold/logger"
 	"github.com/Artur-Galstyan/workcraft-stronghold/models"
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -91,7 +91,7 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	signedToken, err := token.SignedString([]byte(os.Getenv("WORKCRAFT_API_KEY")))
 	if err != nil {
-		slog.Error("Failed to sign token", "err", err)
+		logger.Log.Error("Failed to sign token", "err", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
