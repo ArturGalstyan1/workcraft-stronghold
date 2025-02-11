@@ -101,8 +101,7 @@ func CreateSSEHandler(eventSender *events.EventSender, db *gorm.DB) http.Handler
 					}
 				}
 				return
-			case <-ticker.C:
-				logger.Log.Debug("Ticker!")
+
 			}
 		}
 	}

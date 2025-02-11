@@ -398,14 +398,18 @@ func CleanInconsistencies(db *gorm.DB) error {
 
 	var inconsistentTaskIDs []string
 	if err := tx.Raw(`
-        SELECT t.id
-        FROM tasks t
-        INNER JOIN peons p ON t.peon_id = p.id
-        WHERE p.status == ? OR p.status == ?`,
-		models.PeonStatusIdle, models.PeonStatusOffline,
+		SELECT t.id
+		FROM tasks t
+		INNER JOIN peons p ON t.peon_id = p.id
+		WHERE (p.status = ? OR p.status = ?)
+		AND t.status NOT IN (?, ?, ?)
+	`,
+		models.PeonStatusIdle, models.PeonStatusOffline, models.TaskStatusFailure, models.TaskStatusSuccess, models.TaskStatusCancelled,
 	).Scan(&inconsistentTaskIDs).Error; err != nil {
 		return fmt.Errorf("failed to find inconsistent tasks: %w", err)
 	}
+
+	fmt.Println("Inconsistent Task IDs:", inconsistentTaskIDs)
 
 	for _, taskID := range inconsistentTaskIDs {
 		if err := tx.Exec(`
@@ -417,6 +421,8 @@ func CleanInconsistencies(db *gorm.DB) error {
 			logger.Log.Error("Failed to update task status", "taskID", taskID, "err", err)
 			continue
 		}
+
+		logger.Log.Info("fixing task", "taskId", taskID)
 
 		queue := models.Queue{
 			BaseModel: models.BaseModel{

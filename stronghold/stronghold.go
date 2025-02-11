@@ -78,7 +78,7 @@ func (s *Stronghold) SetupBackgroundTasks() {
 			mutex.Unlock()
 
 			if err != nil {
-				logger.Log.Error("Failed to clean up inconsistencies", "err", err)
+				logger.Log.Error("Failed to clean up inconsistencies", "err", err.Error())
 			}
 		}
 	}()
