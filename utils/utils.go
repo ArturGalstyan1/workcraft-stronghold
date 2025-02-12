@@ -433,7 +433,8 @@ func CleanInconsistencies(db *gorm.DB) error {
 		}
 
 		if err := tx.Clauses(clause.OnConflict{
-			UpdateAll: true,
+			Columns:   []clause.Column{{Name: "task_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{"sent_to_peon", "updated_at"}),
 		}).Create(&queue).Error; err != nil {
 			return fmt.Errorf("failed to upsert into queue: %w", err)
 		}

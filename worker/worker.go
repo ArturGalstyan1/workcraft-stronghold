@@ -3,8 +3,6 @@ package worker
 import (
 	"bufio"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -23,17 +21,13 @@ type MockWorker struct {
 	Status        string
 	LastHeartbeat string
 
-	hashedAPIKey string
-	stopChan     chan struct{}
-	wg           sync.WaitGroup
-	taskChan     chan models.Task
+	apiKey   string
+	stopChan chan struct{}
+	wg       sync.WaitGroup
+	taskChan chan models.Task
 }
 
 func NewMockWorker(id string, queues []string, apiKey string) *MockWorker {
-	hasher := sha256.New()
-	hasher.Write([]byte(apiKey))
-	hashedAPIKey := hex.EncodeToString(hasher.Sum(nil))
-
 	return &MockWorker{
 		ID:            id,
 		CurrentTaskID: nil,
@@ -41,7 +35,7 @@ func NewMockWorker(id string, queues []string, apiKey string) *MockWorker {
 		Status:        "IDLE",
 		LastHeartbeat: time.Now().UTC().String(),
 		stopChan:      make(chan struct{}),
-		hashedAPIKey:  hashedAPIKey,
+		apiKey:        apiKey,
 		taskChan:      make(chan models.Task, 100),
 	}
 }
@@ -115,7 +109,7 @@ func (w *MockWorker) SyncWithDB() {
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("WORKCRAFT_API_KEY", w.hashedAPIKey)
+	req.Header.Set("WORKCRAFT_API_KEY", w.apiKey)
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
@@ -163,7 +157,7 @@ func (w *MockWorker) updateTaskStatus(taskID string, status string) {
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("WORKCRAFT_API_KEY", w.hashedAPIKey)
+	req.Header.Set("WORKCRAFT_API_KEY", w.apiKey)
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
@@ -199,7 +193,7 @@ func (w *MockWorker) sse() {
 		panic(err)
 	}
 	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("WORKCRAFT_API_KEY", w.hashedAPIKey)
+	req.Header.Set("WORKCRAFT_API_KEY", w.apiKey)
 
 	client := &http.Client{}
 	resp, err := client.Do(req)

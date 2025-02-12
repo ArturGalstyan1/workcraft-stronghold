@@ -228,6 +228,7 @@ func GetTask(db *gorm.DB, taskID string) (models.Task, error) {
 }
 
 func GetTasks(db *gorm.DB, queryParams models.TaskQuery) (models.PaginatedResponse, error) {
+	logger.Log.Info("QueryParams", "queryParams", queryParams)
 	if queryParams.Page <= 0 {
 		queryParams.Page = 1
 	}

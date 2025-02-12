@@ -18,11 +18,11 @@ const (
 	TokenExpiration = time.Hour * 24 // 24 hours
 )
 
-func AuthMiddleware(next http.HandlerFunc, hashedApiKey string) http.HandlerFunc {
+func AuthMiddleware(next http.HandlerFunc, apiKey string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := r.Header.Get("WORKCRAFT_API_KEY")
 		if token != "" {
-			if subtle.ConstantTimeCompare([]byte(token), []byte(hashedApiKey)) == 1 {
+			if subtle.ConstantTimeCompare([]byte(token), []byte(apiKey)) == 1 {
 				next.ServeHTTP(w, r)
 				return
 			}

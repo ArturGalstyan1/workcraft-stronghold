@@ -143,26 +143,33 @@ func CreatePostTaskHandler(db *gorm.DB) http.HandlerFunc {
 
 func CreateGetTasksHandler(db *gorm.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// logger.Log.Info("GET /api/tasks")
+		w.Header().Set("Content-Type", "application/json")
 		queryString := r.URL.Query().Get("query")
-
 		queryParams, err := utils.ParseTaskQuery(queryString)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Invalid query: %v", err), http.StatusBadRequest)
 			return
 		}
-
+		logger.Log.Info("queryParams", "queryParams", queryParams)
 		response, err := sqls.GetTasks(db, *queryParams)
 		if err != nil {
-			logger.Log.Error("Failed to fetch tasks", "err", err)
+			logger.Log.Error("Failed to fetch tasks", "err", err.Error())
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
 		}
+		responseMap := map[string]interface{}{
+			"page":        response.Page,
+			"per_page":    response.PerPage,
+			"total_items": response.TotalItems,
+			"total_pages": response.TotalPages,
+			"items":       response.Items,
+		}
 
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(response); err != nil {
-			logger.Log.Error("Error encoding response", "err", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		logger.Log.Info("total items", "total items", response.TotalItems)
+
+		if err := json.NewEncoder(w).Encode(responseMap); err != nil {
+			logger.Log.Error("Error encoding response map: " + err.Error())
+			return
 		}
 	}
 }

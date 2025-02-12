@@ -5,199 +5,223 @@ import "github.com/Artur-Galstyan/workcraft-stronghold/views/layout"
 templ Tasks() {
 	@layout.Base() {
 		<script defer>
-            let totalPages = 0;
-            let currentPage = 0;
-            const sse = window.getSSE();
-            console.log('No socket, reconnecting');
-            sse.onopen = function() {
-                console.log('Connected');
-                reconnectAttempts = 0;
-            };
-            sse.onmessage = function(e) {
-                const data = JSON.parse(e.data);
-                if (data.type === 'task_update') {
-                    updateTaskRow(data.message.task);
-                }
-            };
-            sse.onerror = function(error) {
-                console.error('WebSocket error:', error);
-            };
+		let totalPages = 0;
+		let currentPage = 0;
+		const sse = window.getSSE();
+		console.log('No socket, reconnecting');
+		sse.onopen = function() {
+			console.log('Connected');
+			reconnectAttempts = 0;
+		};
+		sse.onmessage = function(e) {
+			const data = JSON.parse(e.data);
+			if (data.type === 'task_update') {
+				updateTaskRow(data.message.task);
+			}
+		};
+		sse.onerror = function(error) {
+			console.error('WebSocket error:', error);
+		};
 
-            function getStatusClass(status) {
-                return window.getStatusColor(status);
-            }
+		function getStatusClass(status) {
+			return window.getStatusColor(status);
+		}
 
-            function updateTaskRow(task) {
-                const row = document.getElementById(`task-${task.id}`);
-                if (!row) {
-                    return;
-                }
+		function updateTaskRow(task) {
+			const row = document.getElementById(`task-${task.id}`);
+			if (!row) {
+				return;
+			}
 
-                const createdAt = new Date(task.created_at).toLocaleString('en-US', {
-                    year: 'numeric',
-                    month: '2-digit',
-                    day: '2-digit',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                    second: '2-digit'
-                });
+			const createdAt = new Date(task.created_at).toLocaleString('en-US', {
+				year: 'numeric',
+				month: '2-digit',
+				day: '2-digit',
+				hour: '2-digit',
+				minute: '2-digit',
+				second: '2-digit'
+			});
 
-                row.innerHTML = `
-                    <td class="px-4 py-3 border-b">
-                        <a href="/task/${task.id}" class="text-blue-600 hover:underline">
-                            ${task.id}
-                        </a>
-                    </td>
-                    <td class="px-4 py-3 border-b">
-                        <span class="px-2 py-1 rounded-full text-sm inline-block ${window.getStatusColor(task.status)}">
-                            ${task.status}
-                        </span>
-                    </td>
-                    <td class="px-4 py-3 border-b font-mono text-sm">${task.task_name}</td>
-                    <td class="px-4 py-3 border-b">${createdAt}</td>
-                    <td class="px-4 py-3 border-b">${task.queue || 'DEFAULT'}</td>
-                    <td class="px-4 py-3 border-b">
-                        ${task.peon_id ?
-                            `<a href="/peon/${task.peon_id}" class="text-blue-600 hover:underline">
-                                ${task.peon_id}
-                            </a>` :
-                            '<span class="text-gray-500">Not assigned</span>'
-                        }
-                    </td>
-                `;
-            }
-            async function pollTaskData() {
-                try {
-                    const queryParams = new URLSearchParams(window.location.search);
-                    currentPage = parseInt(queryParams.get('page')) || 0;
+			row.innerHTML = `
+				<td class="px-4 py-3 border-b">
+				<a href="/task/${task.id}" class="text-blue-600 hover:underline">
+				${task.id}
+				</a>
+				</td>
+				<td class="px-4 py-3 border-b">
+				<span class="px-2 py-1 rounded-full text-sm inline-block ${window.getStatusColor(task.status)}">
+				${task.status}
+				</span>
+				</td>
+				<td class="px-4 py-3 border-b font-mono text-sm">${task.task_name}</td>
+				<td class="px-4 py-3 border-b">${createdAt}</td>
+				<td class="px-4 py-3 border-b">${task.queue || 'DEFAULT'}</td>
+				<td class="px-4 py-3 border-b">
+				${task.peon_id ?
+				`<a href="/peon/${task.peon_id}" class="text-blue-600 hover:underline">
+				${task.peon_id}
+				</a>` :
+				'<span class="text-gray-500">Not assigned</span>'
+				}
+				</td>
+				`;
+		}
+		async function pollTaskData() {
+			try {
+				const queryParams = new URLSearchParams(window.location.search);
+				let query = {
+					page: 0,
+					per_page: 30,
+					order: {
+						field: 'created_at',
+						dir: 'DESC'
+					}
+				};
 
-                    const query = {
-                        page: currentPage,
-                        per_page: parseInt(queryParams.get('per_page')) || 30,
-                        order: {
-                            field: queryParams.get('sort') || 'created_at',
-                            dir: queryParams.get('dir') || 'DESC'
-                        }
-                    };
+				if (queryParams.get("query")) {
+					const existingQuery = JSON.parse(queryParams.get("query"));
+					if (existingQuery.status) {
+						query.filter = {
+							status: existingQuery.status
+						};
+					} else if (existingQuery.filter) {
+						query.filter = existingQuery.filter;
+					}
+				} else {
+					query.page = parseInt(queryParams.get('page')) || 0;
+					query.per_page = parseInt(queryParams.get('per_page')) || 30;
+					query.order = {
+						field: queryParams.get('sort') || 'created_at',
+						dir: queryParams.get('dir') || 'DESC'
+					};
+				}
 
-                    const response = await fetch(`/api/tasks?query=${JSON.stringify(query)}`);
-                    if (!response.ok) throw new Error('Failed to fetch task data');
-                    const data = await response.json();
-                    totalPages = data.total_pages;
-                    updateTaskTable(data.items);
-                    updatePaginationButtons();
-                } catch (error) {
-                    console.error('Error polling task data:', error);
-                }
-            }
+				console.log("Sending query:", JSON.stringify(query));
 
-            function updateTaskTable(tasks) {
-                const tbody = document.getElementById('tasks-table');
-                tbody.innerHTML = '';
+				const encodedQuery = encodeURIComponent(JSON.stringify(query));
+				const response = await fetch(`/api/tasks?query=${encodedQuery}`);
 
-                if (tasks.length === 0) {
-                    tbody.innerHTML = `
-                        <tr>
-                            <td colspan="6" class="text-center py-4 text-gray-500">
-                                No tasks found
-                            </td>
-                        </tr>
-                    `;
-                    return;
-                }
+				if (!response.ok) {
+					const errorText = await response.text();
+					throw new Error(`Failed to fetch task data: ${errorText}`);
+				}
 
-                tasks.forEach(task => {
-                    const row = document.createElement('tr');
-                    row.id = `task-${task.id}`;
-                    row.className = 'hover:bg-gray-50';
-                    const createdAt = new Date(task.created_at).toLocaleString('en-US', {
-                        year: 'numeric',
-                        month: '2-digit',
-                        day: '2-digit',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        second: '2-digit'
-                    });
+				const data = await response.json();
+				totalPages = data.total_pages;
+				updateTaskTable(data.items);
+				updatePaginationButtons();
+			} catch (error) {
+				console.error('Error polling task data:', error);
+			}
+		}
 
-                    row.innerHTML = `
-                        <td class="px-4 py-3 border-b">
-                            <a href="/task/${task.id}" class="text-blue-600 hover:underline">
-                                ${task.id}
-                            </a>
-                        </td>
-                        <td class="px-4 py-3 border-b">
-                            <span class="px-2 py-1 rounded-full text-sm inline-block ${getStatusClass(task.status)}">
-                                ${task.status}
-                            </span>
-                        </td>
-                        <td class="px-4 py-3 border-b">${task.task_name}</td>
-                        <td class="px-4 py-3 border-b">${createdAt}</td>
-                        <td class="px-4 py-3 border-b">${task.queue}</td>
-                        <td class="px-4 py-3 border-b">
-                            ${task.peon_id ?
-                                `<a href="/peon/${task.peon_id}" class="text-blue-600 hover:underline">
-                                    ${task.peon_id}
-                                </a>` :
-                                '<span class="text-gray-500">Not assigned</span>'
-                            }
-                        </td>
-                    `;
-                    tbody.appendChild(row);
-                });
-            }
+		function updateTaskTable(tasks) {
+			const tbody = document.getElementById('tasks-table');
+			tbody.innerHTML = '';
 
-            function updatePaginationButtons() {
-                const prevButton = document.querySelector('button[onclick="prevPage()"]');
-                const nextButton = document.querySelector('button[onclick="nextPage()"]');
+			if (tasks.length === 0) {
+				tbody.innerHTML = `
+					<tr>
+					<td colspan="6" class="text-center py-4 text-gray-500">
+					No tasks found
+					</td>
+					</tr>
+					`;
+				return;
+			}
 
-                if (prevButton) {
-                    prevButton.disabled = currentPage <= 0;
-                }
-                if (nextButton) {
-                    nextButton.disabled = currentPage >= totalPages - 1;
-                }
-            }
+			tasks.forEach(task => {
+				const row = document.createElement('tr');
+				row.id = `task-${task.id}`;
+				row.className = 'hover:bg-gray-50';
+				const createdAt = new Date(task.created_at).toLocaleString('en-US', {
+					year: 'numeric',
+					month: '2-digit',
+					day: '2-digit',
+					hour: '2-digit',
+					minute: '2-digit',
+					second: '2-digit'
+				});
 
-            async function joinPage(page) {
-                if (page < 0 || page >= totalPages) {
-                    return;
-                }
+				row.innerHTML = `
+					<td class="px-4 py-3 border-b">
+					<a href="/task/${task.id}" class="text-blue-600 hover:underline">
+					${task.id}
+					</a>
+					</td>
+					<td class="px-4 py-3 border-b">
+					<span class="px-2 py-1 rounded-full text-sm inline-block ${getStatusClass(task.status)}">
+					${task.status}
+					</span>
+					</td>
+					<td class="px-4 py-3 border-b">${task.task_name}</td>
+					<td class="px-4 py-3 border-b">${createdAt}</td>
+					<td class="px-4 py-3 border-b">${task.queue}</td>
+					<td class="px-4 py-3 border-b">
+					${task.peon_id ?
+					`<a href="/peon/${task.peon_id}" class="text-blue-600 hover:underline">
+					${task.peon_id}
+					</a>` :
+					'<span class="text-gray-500">Not assigned</span>'
+					}
+					</td>
+					`;
+				tbody.appendChild(row);
+			});
+		}
 
-                const queryParams = new URLSearchParams(window.location.search);
-                queryParams.set('page', page);
+		function updatePaginationButtons() {
+			const prevButton = document.querySelector('button[onclick="prevPage()"]');
+			const nextButton = document.querySelector('button[onclick="nextPage()"]');
 
-                window.history.pushState(
-                    { page },
-                    '',
-                    `${window.location.pathname}?${queryParams.toString()}`
-                );
+			if (prevButton) {
+				prevButton.disabled = currentPage <= 0;
+			}
+			if (nextButton) {
+				nextButton.disabled = currentPage >= totalPages - 1;
+			}
+		}
 
-                currentPage = page;
-                await pollTaskData();
-            }
+		async function joinPage(page) {
+			if (page < 0 || page >= totalPages) {
+				return;
+			}
 
-            async function prevPage() {
-                if (currentPage > 0) {
-                    await joinPage(currentPage - 1);
-                }
-            }
+			const queryParams = new URLSearchParams(window.location.search);
+			queryParams.set('page', page);
 
-            async function nextPage() {
-                if (currentPage < totalPages - 1) {
-                    await joinPage(currentPage + 1);
-                }
-            }
+			window.history.pushState(
+				{ page },
+				'',
+				`${window.location.pathname}?${queryParams.toString()}`
+			);
 
-            window.addEventListener('popstate', async (event) => {
-                await pollTaskData();
-            });
+			currentPage = page;
+			await pollTaskData();
+		}
 
-            $(document).ready(async function() {
-                console.log('Document ready');
-                await pollTaskData();
-                setInterval(pollTaskData, 5000);
-            });
-        </script>
+		async function prevPage() {
+			if (currentPage > 0) {
+				await joinPage(currentPage - 1);
+			}
+		}
+
+		async function nextPage() {
+			if (currentPage < totalPages - 1) {
+				await joinPage(currentPage + 1);
+			}
+		}
+
+		window.addEventListener('popstate', async (event) => {
+			await pollTaskData();
+		});
+
+		$(document).ready(async function() {
+			console.log('Document ready');
+			await pollTaskData();
+			setInterval(pollTaskData, 5000);
+		});
+		</script>
 		<div class="max-w-6xl mx-auto p-6">
 			<div class="bg-gray-50 rounded-lg shadow-sm border border-gray-200 p-6">
 				<div class="flex justify-between items-center mb-6">

@@ -22,10 +22,22 @@ func (h *simpleHandler) Handle(ctx context.Context, r slog.Record) error {
 	timeStr := r.Time.Format("2006-01-02 15:04:05")
 	level := strings.ToUpper(r.Level.String())
 
-	_, err := fmt.Fprintf(h.w, "%s %s %s\n",
+	// Build attributes string
+	var attrs []string
+	r.Attrs(func(a slog.Attr) bool {
+		attrs = append(attrs, fmt.Sprintf("%s=%v", a.Key, a.Value.Any()))
+		return true
+	})
+	attrStr := ""
+	if len(attrs) > 0 {
+		attrStr = " " + strings.Join(attrs, " ")
+	}
+
+	_, err := fmt.Fprintf(h.w, "%s %s %s%s\n",
 		timeStr,
 		level,
 		r.Message,
+		attrStr,
 	)
 	return err
 }

@@ -1,8 +1,6 @@
 package stronghold
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -23,23 +21,19 @@ import (
 )
 
 type Stronghold struct {
-	hashedAPIKey string
-	db           *gorm.DB
-	eventSender  *events.EventSender
-	config       models.WorkcraftConfig
+	apiKey      string
+	db          *gorm.DB
+	eventSender *events.EventSender
+	config      models.WorkcraftConfig
 }
 
 func NewStronghold(apiKey string, db *gorm.DB, eventSender *events.EventSender, config models.WorkcraftConfig) *Stronghold {
 
-	hasher := sha256.New()
-	hasher.Write([]byte(apiKey))
-	hashedAPIKey := hex.EncodeToString(hasher.Sum(nil))
-
 	return &Stronghold{
-		hashedAPIKey: hashedAPIKey,
-		db:           db,
-		eventSender:  eventSender,
-		config:       config,
+		apiKey:      apiKey,
+		db:          db,
+		eventSender: eventSender,
+		config:      config,
 	}
 
 }
@@ -108,29 +102,29 @@ func (s *Stronghold) StartHTTPServer() {
 		}
 	})
 
-	http.HandleFunc("GET /task/{id}", handlers.AuthMiddleware(handlers.CreateTaskViewHandler(s.db), s.hashedAPIKey))
-	http.HandleFunc("GET /tasks/", handlers.AuthMiddleware(handlers.TaskView, s.hashedAPIKey))
-	http.HandleFunc("GET /peon/{id}/", handlers.AuthMiddleware(handlers.CreatePeonViewHandler(), s.hashedAPIKey))
-	http.HandleFunc("GET /peons/", handlers.AuthMiddleware(handlers.CreatePeonsViewHandler(), s.hashedAPIKey))
-	http.HandleFunc("GET /db/", handlers.AuthMiddleware(handlers.CreateDBDataViewHandler(), s.hashedAPIKey))
+	http.HandleFunc("GET /task/{id}", handlers.AuthMiddleware(handlers.CreateTaskViewHandler(s.db), s.apiKey))
+	http.HandleFunc("GET /tasks/", handlers.AuthMiddleware(handlers.TaskView, s.apiKey))
+	http.HandleFunc("GET /peon/{id}/", handlers.AuthMiddleware(handlers.CreatePeonViewHandler(), s.apiKey))
+	http.HandleFunc("GET /peons/", handlers.AuthMiddleware(handlers.CreatePeonsViewHandler(), s.apiKey))
+	http.HandleFunc("GET /db/", handlers.AuthMiddleware(handlers.CreateDBDataViewHandler(), s.apiKey))
 
-	http.HandleFunc("GET /api/peons", handlers.AuthMiddleware(handlers.CreateGetPeonsHandler(s.db), s.hashedAPIKey))
-	http.HandleFunc("GET /api/peon/{id}", handlers.AuthMiddleware(handlers.CreateGetPeonHandler(s.db), s.hashedAPIKey))
-	http.HandleFunc("GET /api/peon/{id}/tasks", handlers.AuthMiddleware(handlers.CreateGetPeonTaskHandler(s.db), s.hashedAPIKey))
-	http.HandleFunc("POST /api/peon/{id}/update", handlers.AuthMiddleware(handlers.CreateUpdatePeonHandler(s.db, s.eventSender), s.hashedAPIKey))
-	http.HandleFunc("POST /api/peon/{id}/statistics", handlers.AuthMiddleware(handlers.CreatePostStatisticsHandler(s.db), s.hashedAPIKey))
+	http.HandleFunc("GET /api/peons", handlers.AuthMiddleware(handlers.CreateGetPeonsHandler(s.db), s.apiKey))
+	http.HandleFunc("GET /api/peon/{id}", handlers.AuthMiddleware(handlers.CreateGetPeonHandler(s.db), s.apiKey))
+	http.HandleFunc("GET /api/peon/{id}/tasks", handlers.AuthMiddleware(handlers.CreateGetPeonTaskHandler(s.db), s.apiKey))
+	http.HandleFunc("POST /api/peon/{id}/update", handlers.AuthMiddleware(handlers.CreateUpdatePeonHandler(s.db, s.eventSender), s.apiKey))
+	http.HandleFunc("POST /api/peon/{id}/statistics", handlers.AuthMiddleware(handlers.CreatePostStatisticsHandler(s.db), s.apiKey))
 
-	http.HandleFunc("POST /api/task", handlers.AuthMiddleware(handlers.CreatePostTaskHandler(s.db), s.hashedAPIKey))
-	http.HandleFunc("GET /api/tasks", handlers.AuthMiddleware(handlers.CreateGetTasksHandler(s.db), s.hashedAPIKey))
-	http.HandleFunc("GET /api/task/{id}", handlers.AuthMiddleware(handlers.CreateGetTaskHandler(s.db), s.hashedAPIKey))
-	http.HandleFunc("POST /api/task/{id}/cancel", handlers.AuthMiddleware(handlers.CreateCancelTaskHandler(s.db, s.eventSender), s.hashedAPIKey))
-	http.HandleFunc("POST /api/task/{id}/update", handlers.AuthMiddleware(handlers.CreateTaskUpdateHandler(s.db, s.eventSender), s.hashedAPIKey))
-	http.HandleFunc("GET /api/test", handlers.AuthMiddleware(createTestHandler(s.eventSender), s.hashedAPIKey))
-	http.HandleFunc("GET /api/db/dump/sqlite", handlers.AuthMiddleware(handlers.DumpDatabaseHandler, s.hashedAPIKey))
-	http.HandleFunc("GET /api/db/dump/csv", handlers.AuthMiddleware(handlers.CreateDumpDatabaseAsCSVHandler(s.db), s.hashedAPIKey))
-	http.HandleFunc("POST /api/db/import/csv", handlers.AuthMiddleware(handlers.CreateImportCSVToDBHandler(s.db), s.hashedAPIKey))
+	http.HandleFunc("POST /api/task", handlers.AuthMiddleware(handlers.CreatePostTaskHandler(s.db), s.apiKey))
+	http.HandleFunc("GET /api/tasks", handlers.AuthMiddleware(handlers.CreateGetTasksHandler(s.db), s.apiKey))
+	http.HandleFunc("GET /api/task/{id}", handlers.AuthMiddleware(handlers.CreateGetTaskHandler(s.db), s.apiKey))
+	http.HandleFunc("POST /api/task/{id}/cancel", handlers.AuthMiddleware(handlers.CreateCancelTaskHandler(s.db, s.eventSender), s.apiKey))
+	http.HandleFunc("POST /api/task/{id}/update", handlers.AuthMiddleware(handlers.CreateTaskUpdateHandler(s.db, s.eventSender), s.apiKey))
+	http.HandleFunc("GET /api/test", handlers.AuthMiddleware(createTestHandler(s.eventSender), s.apiKey))
+	http.HandleFunc("GET /api/db/dump/sqlite", handlers.AuthMiddleware(handlers.DumpDatabaseHandler, s.apiKey))
+	http.HandleFunc("GET /api/db/dump/csv", handlers.AuthMiddleware(handlers.CreateDumpDatabaseAsCSVHandler(s.db), s.apiKey))
+	http.HandleFunc("POST /api/db/import/csv", handlers.AuthMiddleware(handlers.CreateImportCSVToDBHandler(s.db), s.apiKey))
 	http.HandleFunc("GET /api/heartbeat", heartbeatHandler())
-	http.HandleFunc("/events", handlers.AuthMiddleware(handlers.CreateSSEHandler(s.eventSender, s.db), s.hashedAPIKey))
+	http.HandleFunc("/events", handlers.AuthMiddleware(handlers.CreateSSEHandler(s.eventSender, s.db), s.apiKey))
 
 	logger.Log.Info("Building Stronghold on port 6112")
 	if err := http.ListenAndServe(":6112", nil); err != nil {
