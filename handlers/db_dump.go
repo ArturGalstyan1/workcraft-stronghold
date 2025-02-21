@@ -38,15 +38,14 @@ func CreateDumpDatabaseAsCSVHandler(db *gorm.DB) http.HandlerFunc {
 			tasks = []models.Task{}
 		}
 
-		// Set headers for CSV download
 		w.Header().Set("Content-Type", "text/csv")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
 
-		// Create CSV writer
 		writer := csv.NewWriter(w)
+		writer.Comma = rune("\x1f"[0])
+
 		defer writer.Flush()
 
-		// Write header row
 		headers := []string{
 			"id",
 			"created_at",
@@ -125,9 +124,14 @@ func CreateImportCSVToDBHandler(db *gorm.DB) http.HandlerFunc {
 		}
 		defer file.Close()
 
-		reader := csv.NewReader(file)
+		separator := r.FormValue("separator")
+		if separator == "" {
+			separator = ","
+		}
 
-		// Read and validate headers
+		reader := csv.NewReader(file)
+		reader.Comma = rune(separator[0])
+
 		headers, err := reader.Read()
 		if err != nil {
 			http.Error(w, "Error reading CSV headers", http.StatusBadRequest)
