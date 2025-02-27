@@ -42,6 +42,44 @@ func TaskView(w http.ResponseWriter, r *http.Request) {
 	templ.Handler(component).ServeHTTP(w, r)
 }
 
+func CreateTaskDeleteHandler(db *gorm.DB, eventSender *events.EventSender) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		logger.Log.Info("POST /api/task/{id}/delete")
+		taskID := r.PathValue("id")
+		if taskID == "" {
+			logger.Log.Error("Task ID is required")
+			http.Error(w, "Task ID is required", http.StatusBadRequest)
+			return
+		}
+
+		task, err := sqls.GetTask(db, taskID)
+		if err != nil {
+			logger.Log.Error("Task to delete not found", "err", err)
+			http.Error(w, "Task to delete not found", http.StatusNotFound)
+			return
+		}
+		if task.Status == models.TaskStatusRunning {
+			msg := fmt.Sprintf(`{"type": "cancel_task", "task_id": "%s"}`, taskID)
+			if err := eventSender.SendEvent(*task.PeonID, msg); err != nil {
+				logger.Log.Error("Failed to send cancel message", "err", err)
+			}
+		}
+
+		err = sqls.DeleteTask(db, task)
+		if err != nil {
+			logger.Log.Error("Failed to delete task", "err", err.Error())
+			http.Error(w, "Failed to delete task", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		response := map[string]bool{"deleted": true}
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			logger.Log.Error("Failed to encode response", "err", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
+	}
+}
+
 func CreateTaskUpdateHandler(db *gorm.DB, eventSender *events.EventSender) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		logger.Log.Info("POST /api/task/{id}/update")
@@ -59,7 +97,7 @@ func CreateTaskUpdateHandler(db *gorm.DB, eventSender *events.EventSender) http.
 			return
 		}
 
-		logger.Log.Info("Received task update", "data", rawJSON)
+		// logger.Log.Info("Received task update", "data", rawJSON)
 
 		jsonBytes, err := json.Marshal(rawJSON)
 		if err != nil {
@@ -150,7 +188,7 @@ func CreateGetTasksHandler(db *gorm.DB) http.HandlerFunc {
 			http.Error(w, fmt.Sprintf("Invalid query: %v", err), http.StatusBadRequest)
 			return
 		}
-		logger.Log.Info("queryParams", "queryParams", queryParams)
+		// logger.Log.Info("queryParams", "queryParams", queryParams)
 		response, err := sqls.GetTasks(db, *queryParams)
 		if err != nil {
 			logger.Log.Error("Failed to fetch tasks", "err", err.Error())
@@ -165,7 +203,7 @@ func CreateGetTasksHandler(db *gorm.DB) http.HandlerFunc {
 			"items":       response.Items,
 		}
 
-		logger.Log.Info("total items", "total items", response.TotalItems)
+		// logger.Log.Info("total items", "total items", response.TotalItems)
 
 		if err := json.NewEncoder(w).Encode(responseMap); err != nil {
 			logger.Log.Error("Error encoding response map: " + err.Error())
@@ -221,7 +259,22 @@ func CreateCancelTaskHandler(db *gorm.DB, eventSender *events.EventSender) http.
 			return
 		}
 
-		msg := fmt.Sprintf(`{"type": "cancel_task", "data": "%s"}`, taskID)
+		cancelledStatus := string(models.TaskStatusCancelled)
+
+		updatedTask, err := sqls.UpdateTask(db, taskID, models.TaskUpdate{
+			Status:    &cancelledStatus,
+			StatusSet: true,
+			PeonID:    nil,
+			PeonIDSet: true,
+		})
+
+		if err != nil {
+			logger.Log.Error("Failed to update task", "err", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		msg := fmt.Sprintf(`{"type": "cancel_task", "task_id": "%s"}`, taskID)
 		if err := eventSender.SendEvent(*task.PeonID, msg); err != nil {
 			logger.Log.Error("Failed to send cancel message", "err", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -229,7 +282,8 @@ func CreateCancelTaskHandler(db *gorm.DB, eventSender *events.EventSender) http.
 		}
 
 		res := map[string]interface{}{
-			"send": "true",
+			"send":          "true",
+			"cancelledTask": updatedTask,
 		}
 
 		w.Header().Set("Content-Type", "application/json")

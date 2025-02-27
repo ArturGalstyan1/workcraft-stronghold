@@ -182,6 +182,34 @@ func GetPeons(db *gorm.DB, queryParams models.PeonQuery) (models.PaginatedRespon
 	return response, nil
 }
 
+func DeleteTask(db *gorm.DB, task models.Task) error {
+	logger.Log.Info("Attempting to delete task", "taskID", task.ID)
+
+	result := db.Delete(&task)
+	if result.Error != nil {
+		logger.Log.Error("Failed to delete the task", "error", result.Error.Error())
+		return fmt.Errorf("Failed to delete the task: %w", result.Error)
+	} else if result.RowsAffected == 0 {
+		logger.Log.Warn("No rows affected when trying to delete task", "taskID", task.ID)
+	}
+
+	result = db.Where("task_id = ?", task.ID).Delete(&models.Queue{})
+
+	idleStatus := string(models.PeonStatusIdle)
+	if task.PeonID != nil {
+		_, err := UpdatePeon(db, *task.PeonID, models.PeonUpdate{
+			CurrentTaskSet: true,
+			CurrentTask:    nil,
+			Status:         &idleStatus,
+			StatusSet:      true,
+		})
+		if err != nil {
+			logger.Log.Error("Failed to update the peon after task deletion!", "e", err.Error())
+		}
+	}
+	return nil
+}
+
 func CreateTask(db *gorm.DB, task models.Task) (models.Task, error) {
 	if task.TaskName == "" {
 		return models.Task{}, fmt.Errorf("task name is required")
@@ -199,7 +227,7 @@ func CreateTask(db *gorm.DB, task models.Task) (models.Task, error) {
 
 	result := db.Create(&task)
 	if result.Error != nil {
-		return models.Task{}, fmt.Errorf("failed to create task: %w", result.Error)
+		return models.Task{}, fmt.Errorf("failed to create task: %w", result.Error.Error())
 	}
 
 	if result.RowsAffected == 0 {
@@ -228,7 +256,7 @@ func GetTask(db *gorm.DB, taskID string) (models.Task, error) {
 }
 
 func GetTasks(db *gorm.DB, queryParams models.TaskQuery) (models.PaginatedResponse, error) {
-	logger.Log.Info("QueryParams", "queryParams", queryParams)
+	// logger.Log.Info("QueryParams", "queryParams", queryParams)
 	if queryParams.Page <= 0 {
 		queryParams.Page = 1
 	}

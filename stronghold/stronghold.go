@@ -119,6 +119,7 @@ func (s *Stronghold) StartHTTPServer() {
 	http.HandleFunc("GET /api/task/{id}", handlers.AuthMiddleware(handlers.CreateGetTaskHandler(s.db), s.apiKey))
 	http.HandleFunc("POST /api/task/{id}/cancel", handlers.AuthMiddleware(handlers.CreateCancelTaskHandler(s.db, s.eventSender), s.apiKey))
 	http.HandleFunc("POST /api/task/{id}/update", handlers.AuthMiddleware(handlers.CreateTaskUpdateHandler(s.db, s.eventSender), s.apiKey))
+	http.HandleFunc("DELETE /api/task/{id}/delete", handlers.AuthMiddleware(handlers.CreateTaskDeleteHandler(s.db, s.eventSender), s.apiKey))
 	http.HandleFunc("GET /api/test", handlers.AuthMiddleware(createTestHandler(s.eventSender), s.apiKey))
 	http.HandleFunc("GET /api/db/dump/sqlite", handlers.AuthMiddleware(handlers.DumpDatabaseHandler, s.apiKey))
 	http.HandleFunc("GET /api/db/dump/csv", handlers.AuthMiddleware(handlers.CreateDumpDatabaseAsCSVHandler(s.db), s.apiKey))

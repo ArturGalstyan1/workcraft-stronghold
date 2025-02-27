@@ -11,12 +11,12 @@ templ Index() {
                 const data = await response.json();
 
                 $('#workers').empty();
-
+                console.log(data)
                 data.items.forEach(function(item) {
                     if (item.status !== "OFFLINE") {
                         const taskCell = item.current_task
                             ? `<td class="px-4 py-2 link">
-                                 <a href="/task/${item.current_task.id}">
+                                 <a href="/task/${item.current_task}">
                                    ${item.current_task}
                                  </a>
                                </td>`
