@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
@@ -20,9 +21,14 @@ const (
 
 func AuthMiddleware(next http.HandlerFunc, apiKey string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		jwtSecret := os.Getenv("WORKCRAFT_JWT_SECRET")
+		if jwtSecret == "" {
+			jwtSecret = os.Getenv("WORKCRAFT_CHIEFTAIN_PASS")
+		}
 		token := r.Header.Get("WORKCRAFT_API_KEY")
 		if token != "" {
 			if subtle.ConstantTimeCompare([]byte(token), []byte(apiKey)) == 1 {
+				// Successfully authenticated with API key
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -33,6 +39,7 @@ func AuthMiddleware(next http.HandlerFunc, apiKey string) http.HandlerFunc {
 		cookie, err := r.Cookie("workcraft_auth")
 		if err != nil {
 			if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/events") {
+				logger.Log.Error("Unauthorised!", "error", err.Error())
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return
 			}
@@ -46,11 +53,12 @@ func AuthMiddleware(next http.HandlerFunc, apiKey string) http.HandlerFunc {
 			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 			}
-			return []byte(os.Getenv("WORKCRAFT_API_KEY")), nil
+			return []byte(jwtSecret), nil
 		})
 
 		if err != nil || !jwtToken.Valid {
 			if strings.HasPrefix(r.URL.Path, "/api/") {
+				logger.Log.Error("Unauthorised!", "error", err.Error())
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return
 			}
@@ -58,38 +66,44 @@ func AuthMiddleware(next http.HandlerFunc, apiKey string) http.HandlerFunc {
 			return
 		}
 
-		r.Header.Set("WORKCRAFT_API_KEY", claims.APIKey)
-		next.ServeHTTP(w, r)
+		ctx := context.WithValue(r.Context(), "username", claims.Username)
+		r.Header.Set("WORKCRAFT_API_KEY", apiKey)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	}
 }
 
 func LoginHandler(w http.ResponseWriter, r *http.Request) {
+	jwtSecret := os.Getenv("WORKCRAFT_JWT_SECRET")
+	if jwtSecret == "" {
+		jwtSecret = os.Getenv("WORKCRAFT_CHIEFTAIN_PASS")
+	}
 	var creds models.Credentials
 	if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
+		logger.Log.Error("Invalid request body", "error", err.Error())
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
 	if creds.Username != os.Getenv("WORKCRAFT_CHIEFTAIN_USER") ||
 		creds.Password != os.Getenv("WORKCRAFT_CHIEFTAIN_PASS") {
+		logger.Log.Error("Invalid credentials!")
 		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 		return
 	}
 
-	// Create the JWT claims
 	now := time.Now()
 	claims := models.Claims{
+		Username: creds.Username,
+		Role:     "admin",
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(now.Add(TokenExpiration)),
 			IssuedAt:  jwt.NewNumericDate(now),
 			NotBefore: jwt.NewNumericDate(now),
 		},
-		APIKey: os.Getenv("WORKCRAFT_API_KEY"),
 	}
 
-	// Create and sign the token using the API key as the secret
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	signedToken, err := token.SignedString([]byte(os.Getenv("WORKCRAFT_API_KEY")))
+	signedToken, err := token.SignedString([]byte(jwtSecret))
 	if err != nil {
 		logger.Log.Error("Failed to sign token", "err", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -99,10 +113,13 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     "workcraft_auth",
 		Value:    signedToken,
-		HttpOnly: true,  // Cannot be accessed by JavaScript
-		Secure:   false, // false for development, true for production
+		HttpOnly: true,
+		Secure:   r.TLS != nil,
 		SameSite: http.SameSiteStrictMode,
 		Path:     "/",
-		MaxAge:   int(TokenExpiration.Seconds()), // Match JWT expiration
+		MaxAge:   int(TokenExpiration.Seconds()),
 	})
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "success"})
 }

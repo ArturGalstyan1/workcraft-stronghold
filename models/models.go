@@ -9,6 +9,18 @@ import (
 	"gorm.io/gorm"
 )
 
+type Credentials struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+type Claims struct {
+	Username string `json:"username"`
+	Role     string `json:"role,omitempty"`
+
+	jwt.RegisteredClaims
+}
+
 type WorkcraftConfig struct {
 	TimeBeforeDeadPeon time.Duration `json:"time_before_dead_peon"`
 }
@@ -96,16 +108,6 @@ type TaskUpdate struct {
 type SSEMessage struct {
 	Type    string                  `json:"type"`
 	Message *map[string]interface{} `json:"message,omitempty"`
-}
-
-type Credentials struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
-}
-
-type Claims struct {
-	jwt.RegisteredClaims
-	APIKey string `json:"api_key"`
 }
 
 type TaskAcknowledgement struct {
