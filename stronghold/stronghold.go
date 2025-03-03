@@ -2,6 +2,7 @@ package stronghold
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -17,7 +18,6 @@ import (
 	"github.com/Artur-Galstyan/workcraft-stronghold/views"
 	"github.com/a-h/templ"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 type Stronghold struct {
@@ -229,11 +229,21 @@ func (s *Stronghold) PutPendingTasksIntoQueue() {
 			TaskID:     taskInfo.ID,
 			SentToPeon: false,
 		}
-		if err := tx.Clauses(clause.OnConflict{
-			UpdateAll: true,
-		}).Create(&queue).Error; err != nil {
-			logger.Log.Error("Failed to upsert task into queue", "taskID", taskInfo.ID, "err", err)
+		var existingQueue models.Queue
+		result := tx.Where("task_id = ?", taskInfo.ID).First(&existingQueue)
+		if result.Error != nil && !errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			logger.Log.Error("Failed to check existing queue", "taskID", taskInfo.ID, "err", result.Error.Error())
 			return
+		} else if result.RowsAffected == 0 {
+			if err := tx.Create(&queue).Error; err != nil {
+				logger.Log.Error("Failed to create task in queue", "taskID", taskInfo.ID, "err", err.Error())
+				return
+			}
+		} else {
+			if err := tx.Model(&existingQueue).Update("sent_to_peon", false).Error; err != nil {
+				logger.Log.Error("Failed to update task in queue", "taskID", taskInfo.ID, "err", err.Error())
+				return
+			}
 		}
 
 		if taskInfo.Status == string(models.TaskStatusFailure) {
