@@ -245,8 +245,8 @@ func (s *Stronghold) PutPendingTasksIntoQueue() {
 				return
 			}
 		}
-
 		if taskInfo.Status == string(models.TaskStatusFailure) {
+			logger.Log.Info("YO IT WAS FAILED DUDE")
 			if err := tx.Exec(`
                 UPDATE tasks
                 SET retry_count = ?
@@ -266,7 +266,7 @@ func (s *Stronghold) PutPendingTasksIntoQueue() {
 }
 
 func (s *Stronghold) SendPendingTasksInterval() {
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	for {
 		select {

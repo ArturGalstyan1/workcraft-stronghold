@@ -97,7 +97,7 @@ func CreateTaskUpdateHandler(db *gorm.DB, eventSender *events.EventSender) http.
 			return
 		}
 
-		// logger.Log.Info("Received task update", "data", rawJSON)
+		logger.Log.Info("Received task update", "data", rawJSON)
 
 		jsonBytes, err := json.Marshal(rawJSON)
 		if err != nil {
@@ -134,6 +134,7 @@ func CreateTaskUpdateHandler(db *gorm.DB, eventSender *events.EventSender) http.
 		}
 
 		taskJSON, err := json.Marshal(updatedTask)
+		logger.Log.Info("THE UPDATED TASK JSON IS: ", "taskJSON=", string(taskJSON))
 		if err != nil {
 			logger.Log.Error("Failed to serialize updated task", "err", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)

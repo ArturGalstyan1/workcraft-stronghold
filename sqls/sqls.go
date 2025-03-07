@@ -227,7 +227,7 @@ func CreateTask(db *gorm.DB, task models.Task) (models.Task, error) {
 
 	result := db.Create(&task)
 	if result.Error != nil {
-		return models.Task{}, fmt.Errorf("failed to create task: %w", result.Error.Error())
+		return models.Task{}, fmt.Errorf("failed to create task: %w", result.Error)
 	}
 
 	if result.RowsAffected == 0 {
@@ -408,6 +408,16 @@ func UpdateTask(db *gorm.DB, taskID string, partialTask models.TaskUpdate) (mode
 		if resultQueue.Error != nil {
 			tx.Rollback()
 			return models.Task{}, fmt.Errorf("failed to update queue: %w", resultQueue.Error)
+		}
+	} else if partialTask.StatusSet &&
+		(*partialTask.Status == "FAILURE" ||
+			*partialTask.Status == "CANCELLED" ||
+			*partialTask.Status == "SUCCESS") {
+		// this is a terminal status; so we can remove the task from the queue
+		// and let PutPendingTasksIntoQueue handle the retrying
+		result := tx.Where("task_id = ?", taskID).Delete(&models.Queue{})
+		if result.Error != nil {
+			return models.Task{}, fmt.Errorf("failed to fetch updated task: %w", result.Error)
 		}
 	}
 
