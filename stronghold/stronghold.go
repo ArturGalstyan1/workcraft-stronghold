@@ -310,7 +310,7 @@ func (s *Stronghold) CheckDeadWorkers() {
 }
 
 func (s *Stronghold) CheckDeadWorkerInterval() {
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 	for {
 		select {
