@@ -9,6 +9,9 @@ import (
 	"github.com/Artur-Galstyan/workcraft-stronghold/logger"
 )
 
+const WORKCRAFT_SSE_SEPARATOR_START = "###WORKCRAFT_MESSAGE_START###"
+const WORKCRAFT_SSE_SEPARATOR_END = "###WORKCRAFT_MESSAGE_END###"
+
 type EventSender struct {
 	connections map[string]http.ResponseWriter
 	controllers map[string]http.ResponseController
@@ -46,7 +49,7 @@ func (s *EventSender) SendEvent(ID string, msg string) error {
 		return fmt.Errorf("no connection found for ID: %s", ID)
 	}
 
-	_, err := fmt.Fprintf(w, "data: %s\n\n", msg)
+	_, err := fmt.Fprintf(w, "%s%s%s", WORKCRAFT_SSE_SEPARATOR_START, msg, WORKCRAFT_SSE_SEPARATOR_END)
 	if err != nil {
 		return err
 	}
@@ -57,7 +60,7 @@ func (s *EventSender) BroadcastToPeons(msg string) {
 	for id := range s.connections {
 		w := s.connections[id]
 		rc := s.controllers[id]
-		_, err := fmt.Fprintf(w, "data: %s\n\n", msg)
+		_, err := fmt.Fprintf(w, "%s%s%s", WORKCRAFT_SSE_SEPARATOR_START, msg, WORKCRAFT_SSE_SEPARATOR_END)
 		if err != nil {
 			logger.Log.Error("Failed to flush writer", "err", err)
 			continue
