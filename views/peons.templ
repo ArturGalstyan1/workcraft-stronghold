@@ -45,6 +45,13 @@ templ Peons() {
                     second: '2-digit'
                 });
 
+
+            let currTask = peon.current_task ?
+            `<a href="/task/${peon.current_task}" class="text-blue-600 hover:underline">
+            ${peon.current_task}
+            </a>` :
+            '<span class="text-gray-500">No active task</span>'
+
             row.innerHTML = `
                 <td class="px-4 py-3 border-b">
                 <a href="/peon/${peon.id}" class="text-blue-600 hover:underline">
@@ -63,12 +70,7 @@ templ Peons() {
                 <td class="px-4 py-3 border-b">${timestamp}</td>
                 <td class="px-4 py-3 border-b">${peon.queues || 'DEFAULT'}</td>
                 <td class="px-4 py-3 border-b">
-                ${peon.current_task ?
-                `<a href="/task/${peon.current_task}" class="text-blue-600 hover:underline">
-                ${peon.current_task}
-                </a>` :
-                '<span class="text-gray-500">No active task</span>'
-                }
+                ${currTask}
                 </td>
                 `;
         }
@@ -104,6 +106,12 @@ templ Peons() {
                         second: '2-digit'
                     });
 
+
+                let currTask =
+                  peon.current_task ?
+                  `<a href="/task/${peon.current_task}" class="text-blue-600 hover:underline">
+                  ${peon.current_task}</a>` : '<span class="text-gray-500">No active task</span>'
+
                 row.innerHTML = `
                     <td class="px-4 py-3 border-b">
                     <a href="/peon/${peon.id}" class="text-blue-600 hover:underline">
@@ -122,9 +130,7 @@ templ Peons() {
                     <td class="px-4 py-3 border-b">${timestamp}</td>
                     <td class="px-4 py-3 border-b">${peon.queues || 'DEFAULT'}</td>
                     <td class="px-4 py-3 border-b">
-                    ${peon.current_task ?
-                    `<a href="/task/${peon.current_task}" class="text-blue-600 hover:underline">
-                    ${peon.current_task}</a>` : '<span class="text-gray-500">No active task</span>'}
+                    ${currTask}
                     </td>
                     `;
                 tbody.appendChild(row);

@@ -41,6 +41,12 @@ templ Tasks() {
 				minute: '2-digit',
 				second: '2-digit'
 			});
+			const peonID =  task.peon_id ?
+				`<a href="/peon/${task.peon_id}" class="text-blue-600 hover:underline">
+				${task.peon_id}
+				</a>` :
+				'<span class="text-gray-500">Not assigned</span>'
+
 
 			row.innerHTML = `
 				<td class="px-4 py-3 border-b">
@@ -57,12 +63,7 @@ templ Tasks() {
 				<td class="px-4 py-3 border-b">${createdAt}</td>
 				<td class="px-4 py-3 border-b">${task.queue || 'DEFAULT'}</td>
 				<td class="px-4 py-3 border-b">
-				${task.peon_id ?
-				`<a href="/peon/${task.peon_id}" class="text-blue-600 hover:underline">
-				${task.peon_id}
-				</a>` :
-				'<span class="text-gray-500">Not assigned</span>'
-				}
+				${peonId}
 				</td>
 				`;
 		}
@@ -143,6 +144,11 @@ templ Tasks() {
 					second: '2-digit'
 				});
 
+				const peonID =  task.peon_id ?
+					`<a href="/peon/${task.peon_id}" class="text-blue-600 hover:underline">
+					${task.peon_id}
+					</a>` :
+					'<span class="text-gray-500">Not assigned</span>'
 				row.innerHTML = `
 					<td class="px-4 py-3 border-b">
 					<a href="/task/${task.id}" class="text-blue-600 hover:underline">
@@ -158,12 +164,7 @@ templ Tasks() {
 					<td class="px-4 py-3 border-b">${createdAt}</td>
 					<td class="px-4 py-3 border-b">${task.queue}</td>
 					<td class="px-4 py-3 border-b">
-					${task.peon_id ?
-					`<a href="/peon/${task.peon_id}" class="text-blue-600 hover:underline">
-					${task.peon_id}
-					</a>` :
-					'<span class="text-gray-500">Not assigned</span>'
-					}
+					${peonID}
 					</td>
 					`;
 				tbody.appendChild(row);
