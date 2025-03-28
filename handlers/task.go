@@ -160,14 +160,14 @@ func CreatePostTaskHandler(db *gorm.DB) http.HandlerFunc {
 
 		var task models.Task
 		if err := json.NewDecoder(r.Body).Decode(&task); err != nil {
-			logger.Log.Error("Failed to decode request body", "err", err)
+			logger.Log.Error("Failed to decode request body", "err", err.Error())
 			http.Error(w, "Invalid request body", http.StatusBadRequest)
 			return
 		}
 
 		task, err := sqls.CreateTask(db, task)
 		if err != nil {
-			logger.Log.Error("Failed to create task", "err", err)
+			logger.Log.Error("Failed to create task", "err", err.Error())
 			http.Error(w, "Failed to create task", http.StatusInternalServerError)
 			return
 		}
@@ -175,7 +175,7 @@ func CreatePostTaskHandler(db *gorm.DB) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		if err := json.NewEncoder(w).Encode(task); err != nil {
-			logger.Log.Error("Failed to encode task", "err", err)
+			logger.Log.Error("Failed to encode task", "err", err.Error())
 		}
 	}
 }
@@ -189,7 +189,7 @@ func CreateGetTasksHandler(db *gorm.DB) http.HandlerFunc {
 			http.Error(w, fmt.Sprintf("Invalid query: %v", err), http.StatusBadRequest)
 			return
 		}
-		// logger.Log.Info("queryParams", "queryParams", queryParams)
+
 		response, err := sqls.GetTasks(db, *queryParams)
 		if err != nil {
 			logger.Log.Error("Failed to fetch tasks", "err", err.Error())
@@ -203,8 +203,6 @@ func CreateGetTasksHandler(db *gorm.DB) http.HandlerFunc {
 			"total_pages": response.TotalPages,
 			"items":       response.Items,
 		}
-
-		// logger.Log.Info("total items", "total items", response.TotalItems)
 
 		if err := json.NewEncoder(w).Encode(responseMap); err != nil {
 			logger.Log.Error("Error encoding response map: " + err.Error())

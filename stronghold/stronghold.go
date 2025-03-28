@@ -165,7 +165,7 @@ func (s *Stronghold) SendPendingTasks() {
 		peon, err := sqls.GetAvailablePeon(s.db, task.Queue, usedPeons)
 		usedPeons[peon.ID] = true
 		if err != nil {
-			// logger.Log.Info("Failed to get available peon, skipping. ", "err", err)
+			logger.Log.Info("Failed to get available peon, skipping. ", "err", err)
 			continue
 		}
 
